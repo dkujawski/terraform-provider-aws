@@ -2,50 +2,52 @@ package aws
 
 import (
 	"fmt"
+	"log"
 	"net/url"
 	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/iam"
-
-	"github.com/hashicorp/terraform/helper/resource"
-	"github.com/hashicorp/terraform/helper/schema"
+	"github.com/hashicorp/aws-sdk-go-base/tfawserr"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/terraform-providers/terraform-provider-aws/aws/internal/service/iam/waiter"
+	"github.com/terraform-providers/terraform-provider-aws/aws/internal/tfresource"
 )
 
 func resourceAwsIamUserPolicy() *schema.Resource {
 	return &schema.Resource{
 		// PutUserPolicy API is idempotent, so these can be the same.
 		Create: resourceAwsIamUserPolicyPut,
+		Read:   resourceAwsIamUserPolicyRead,
 		Update: resourceAwsIamUserPolicyPut,
+		Delete: resourceAwsIamUserPolicyDelete,
 
 		Importer: &schema.ResourceImporter{
 			State: schema.ImportStatePassthrough,
 		},
 
-		Read:   resourceAwsIamUserPolicyRead,
-		Delete: resourceAwsIamUserPolicyDelete,
-
 		Schema: map[string]*schema.Schema{
-			"policy": &schema.Schema{
+			"policy": {
 				Type:             schema.TypeString,
 				Required:         true,
 				ValidateFunc:     validateIAMPolicyJson,
 				DiffSuppressFunc: suppressEquivalentAwsPolicyDiffs,
 			},
-			"name": &schema.Schema{
+			"name": {
 				Type:          schema.TypeString,
 				Optional:      true,
 				Computed:      true,
 				ForceNew:      true,
 				ConflictsWith: []string{"name_prefix"},
 			},
-			"name_prefix": &schema.Schema{
-				Type:     schema.TypeString,
-				Optional: true,
-				ForceNew: true,
+			"name_prefix": {
+				Type:          schema.TypeString,
+				Optional:      true,
+				ForceNew:      true,
+				ConflictsWith: []string{"name"},
 			},
-			"user": &schema.Schema{
+			"user": {
 				Type:     schema.TypeString,
 				Required: true,
 				ForceNew: true,
@@ -99,17 +101,40 @@ func resourceAwsIamUserPolicyRead(d *schema.ResourceData, meta interface{}) erro
 		UserName:   aws.String(user),
 	}
 
-	getResp, err := iamconn.GetUserPolicy(request)
-	if err != nil {
-		if iamerr, ok := err.(awserr.Error); ok && iamerr.Code() == "NoSuchEntity" { // XXX test me
-			d.SetId("")
-			return nil
+	var getResp *iam.GetUserPolicyOutput
+
+	err = resource.Retry(waiter.PropagationTimeout, func() *resource.RetryError {
+		var err error
+
+		getResp, err = iamconn.GetUserPolicy(request)
+
+		if d.IsNewResource() && tfawserr.ErrCodeEquals(err, iam.ErrCodeNoSuchEntityException) {
+			return resource.RetryableError(err)
 		}
-		return fmt.Errorf("Error reading IAM policy %s from user %s: %s", name, user, err)
+
+		if err != nil {
+			return resource.NonRetryableError(err)
+		}
+
+		return nil
+	})
+
+	if tfresource.TimedOut(err) {
+		getResp, err = iamconn.GetUserPolicy(request)
 	}
 
-	if getResp.PolicyDocument == nil {
-		return fmt.Errorf("GetUserPolicy returned a nil policy document")
+	if !d.IsNewResource() && tfawserr.ErrCodeEquals(err, iam.ErrCodeNoSuchEntityException) {
+		log.Printf("[WARN] IAM User Policy (%s) not found, removing from state", d.Id())
+		d.SetId("")
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("error reading IAM User Policy (%s): %w", d.Id(), err)
+	}
+
+	if getResp == nil || getResp.PolicyDocument == nil {
+		return fmt.Errorf("error reading IAM User Policy (%s): empty response", d.Id())
 	}
 
 	policy, err := url.QueryUnescape(*getResp.PolicyDocument)
@@ -139,6 +164,9 @@ func resourceAwsIamUserPolicyDelete(d *schema.ResourceData, meta interface{}) er
 	}
 
 	if _, err := iamconn.DeleteUserPolicy(request); err != nil {
+		if isAWSErr(err, iam.ErrCodeNoSuchEntityException, "") {
+			return nil
+		}
 		return fmt.Errorf("Error deleting IAM user policy %s: %s", d.Id(), err)
 	}
 	return nil

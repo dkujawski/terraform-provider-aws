@@ -6,7 +6,9 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
-	"github.com/hashicorp/terraform/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/terraform-providers/terraform-provider-aws/aws/internal/service/ec2/waiter"
+	"github.com/terraform-providers/terraform-provider-aws/aws/internal/tfresource"
 )
 
 func resourceAwsVpnGatewayRoutePropagation() *schema.Resource {
@@ -16,12 +18,12 @@ func resourceAwsVpnGatewayRoutePropagation() *schema.Resource {
 		Delete: resourceAwsVpnGatewayRoutePropagationDisable,
 
 		Schema: map[string]*schema.Schema{
-			"vpn_gateway_id": &schema.Schema{
+			"vpn_gateway_id": {
 				Type:     schema.TypeString,
 				Required: true,
 				ForceNew: true,
 			},
-			"route_table_id": &schema.Schema{
+			"route_table_id": {
 				Type:     schema.TypeString,
 				Required: true,
 				ForceNew: true,
@@ -64,7 +66,6 @@ func resourceAwsVpnGatewayRoutePropagationDisable(d *schema.ResourceData, meta i
 		return fmt.Errorf("error disabling VGW propagation: %s", err)
 	}
 
-	d.SetId("")
 	return nil
 }
 
@@ -75,20 +76,27 @@ func resourceAwsVpnGatewayRoutePropagationRead(d *schema.ResourceData, meta inte
 	rtID := d.Get("route_table_id").(string)
 
 	log.Printf("[INFO] Reading route table %s to check for VPN gateway %s", rtID, gwID)
-	rtRaw, _, err := resourceAwsRouteTableStateRefreshFunc(conn, rtID)()
-	if err != nil {
-		return err
+	rt, err := waiter.RouteTableReady(conn, rtID)
+
+	if !d.IsNewResource() && tfresource.NotFound(err) {
+		log.Printf("[WARN] Route table (%s) not found, removing VPN gateway route propagation (%s) from state", rtID, d.Id())
+		d.SetId("")
+		return nil
 	}
-	if rtRaw == nil {
+
+	if err != nil {
+		return fmt.Errorf("error getting route table (%s) status while reading VPN gateway route propagation: %w", rtID, err)
+	}
+
+	if rt == nil {
 		log.Printf("[INFO] Route table %q doesn't exist, so dropping %q route propagation from state", rtID, gwID)
 		d.SetId("")
 		return nil
 	}
 
-	rt := rtRaw.(*ec2.RouteTable)
 	exists := false
 	for _, vgw := range rt.PropagatingVgws {
-		if *vgw.GatewayId == gwID {
+		if aws.StringValue(vgw.GatewayId) == gwID {
 			exists = true
 		}
 	}

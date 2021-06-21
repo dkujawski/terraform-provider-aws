@@ -1,36 +1,44 @@
 package aws
 
 import (
+	"fmt"
 	"regexp"
 	"testing"
 
-	"github.com/hashicorp/terraform/helper/resource"
+	"github.com/aws/aws-sdk-go/service/ecs"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/acctest"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 )
 
 func TestAccAWSEcsDataSource_ecsTaskDefinition(t *testing.T) {
-	resource.Test(t, resource.TestCase{
-		PreCheck:  func() { testAccPreCheck(t) },
-		Providers: testAccProviders,
+	resourceName := "data.aws_ecs_task_definition.mongo"
+	rName := fmt.Sprintf("tf-acc-test-%s", acctest.RandString(5))
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:   func() { testAccPreCheck(t) },
+		ErrorCheck: testAccErrorCheck(t, ecs.EndpointsID),
+		Providers:  testAccProviders,
 		Steps: []resource.TestStep{
-			resource.TestStep{
-				Config: testAccCheckAwsEcsTaskDefinitionDataSourceConfig,
+			{
+				Config: testAccCheckAwsEcsTaskDefinitionDataSourceConfig(rName),
 				Check: resource.ComposeTestCheckFunc(
-					resource.TestMatchResourceAttr("data.aws_ecs_task_definition.mongo", "id", regexp.MustCompile("^arn:aws:ecs:us-west-2:[0-9]{12}:task-definition/mongodb:[1-9][0-9]*$")),
-					resource.TestCheckResourceAttr("data.aws_ecs_task_definition.mongo", "family", "mongodb"),
-					resource.TestCheckResourceAttr("data.aws_ecs_task_definition.mongo", "network_mode", "bridge"),
-					resource.TestMatchResourceAttr("data.aws_ecs_task_definition.mongo", "revision", regexp.MustCompile("^[1-9][0-9]*$")),
-					resource.TestCheckResourceAttr("data.aws_ecs_task_definition.mongo", "status", "ACTIVE"),
-					resource.TestMatchResourceAttr("data.aws_ecs_task_definition.mongo", "task_role_arn", regexp.MustCompile("^arn:aws:iam::[0-9]{12}:role/mongo_role$")),
+					resource.TestCheckResourceAttr(resourceName, "family", rName),
+					resource.TestCheckResourceAttr(resourceName, "network_mode", "bridge"),
+					resource.TestMatchResourceAttr(resourceName, "revision", regexp.MustCompile("^[1-9][0-9]*$")),
+					resource.TestCheckResourceAttr(resourceName, "status", "ACTIVE"),
+					resource.TestCheckResourceAttrPair(resourceName, "task_role_arn", "aws_iam_role.mongo_role", "arn"),
 				),
 			},
 		},
 	})
 }
 
-const testAccCheckAwsEcsTaskDefinitionDataSourceConfig = `
+func testAccCheckAwsEcsTaskDefinitionDataSourceConfig(rName string) string {
+	return fmt.Sprintf(`
 resource "aws_iam_role" "mongo_role" {
-    name = "mongo_role"
-    assume_role_policy = <<POLICY
+  name = "%[1]s"
+
+  assume_role_policy = <<POLICY
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -48,17 +56,20 @@ POLICY
 }
 
 resource "aws_ecs_task_definition" "mongo" {
-  family = "mongodb"
-  task_role_arn = "${aws_iam_role.mongo_role.arn}"
-  network_mode = "bridge"
+  family        = "%[1]s"
+  task_role_arn = aws_iam_role.mongo_role.arn
+  network_mode  = "bridge"
+
   container_definitions = <<DEFINITION
 [
   {
     "cpu": 128,
-    "environment": [{
-      "name": "SECRET",
-      "value": "KEY"
-    }],
+    "environment": [
+      {
+        "name": "SECRET",
+        "value": "KEY"
+      }
+    ],
     "essential": true,
     "image": "mongo:latest",
     "memory": 128,
@@ -70,6 +81,7 @@ DEFINITION
 }
 
 data "aws_ecs_task_definition" "mongo" {
-  task_definition = "${aws_ecs_task_definition.mongo.family}"
+  task_definition = aws_ecs_task_definition.mongo.family
 }
-`
+`, rName)
+}

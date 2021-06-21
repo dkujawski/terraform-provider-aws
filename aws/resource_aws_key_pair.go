@@ -2,64 +2,74 @@ package aws
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
-	"github.com/hashicorp/terraform/helper/resource"
-	"github.com/hashicorp/terraform/helper/schema"
-
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/arn"
 	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
+	"github.com/terraform-providers/terraform-provider-aws/aws/internal/keyvaluetags"
 )
 
 func resourceAwsKeyPair() *schema.Resource {
+	//lintignore:R011
 	return &schema.Resource{
 		Create: resourceAwsKeyPairCreate,
 		Read:   resourceAwsKeyPairRead,
-		Update: nil,
+		Update: resourceAwsKeyPairUpdate,
 		Delete: resourceAwsKeyPairDelete,
 		Importer: &schema.ResourceImporter{
 			State: schema.ImportStatePassthrough,
 		},
 
+		CustomizeDiff: SetTagsDiff,
+
 		SchemaVersion: 1,
 		MigrateState:  resourceAwsKeyPairMigrateState,
 
 		Schema: map[string]*schema.Schema{
-			"key_name": &schema.Schema{
+			"key_name": {
 				Type:          schema.TypeString,
 				Optional:      true,
 				Computed:      true,
 				ForceNew:      true,
 				ConflictsWith: []string{"key_name_prefix"},
+				ValidateFunc:  validation.StringLenBetween(0, 255),
 			},
-			"key_name_prefix": &schema.Schema{
-				Type:     schema.TypeString,
-				Optional: true,
-				ForceNew: true,
-				ValidateFunc: func(v interface{}, k string) (ws []string, errors []error) {
-					value := v.(string)
-					if len(value) > 100 {
-						errors = append(errors, fmt.Errorf(
-							"%q cannot be longer than 100 characters, name is limited to 255", k))
-					}
-					return
-				},
+			"key_name_prefix": {
+				Type:          schema.TypeString,
+				Optional:      true,
+				ForceNew:      true,
+				ConflictsWith: []string{"key_name"},
+				ValidateFunc:  validation.StringLenBetween(0, 255-resource.UniqueIDSuffixLength),
 			},
-			"public_key": &schema.Schema{
+			"public_key": {
 				Type:     schema.TypeString,
 				Required: true,
 				ForceNew: true,
 				StateFunc: func(v interface{}) string {
-					switch v.(type) {
+					switch v := v.(type) {
 					case string:
-						return strings.TrimSpace(v.(string))
+						return strings.TrimSpace(v)
 					default:
 						return ""
 					}
 				},
 			},
-			"fingerprint": &schema.Schema{
+			"fingerprint": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
+			"key_pair_id": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
+			"tags":     tagsSchema(),
+			"tags_all": tagsSchemaComputed(),
+			"arn": {
 				Type:     schema.TypeString,
 				Computed: true,
 			},
@@ -69,6 +79,8 @@ func resourceAwsKeyPair() *schema.Resource {
 
 func resourceAwsKeyPairCreate(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*AWSClient).ec2conn
+	defaultTagsConfig := meta.(*AWSClient).DefaultTagsConfig
+	tags := defaultTagsConfig.MergeTags(keyvaluetags.New(d.Get("tags").(map[string]interface{})))
 
 	var keyName string
 	if v, ok := d.GetOk("key_name"); ok {
@@ -85,40 +97,86 @@ func resourceAwsKeyPairCreate(d *schema.ResourceData, meta interface{}) error {
 	req := &ec2.ImportKeyPairInput{
 		KeyName:           aws.String(keyName),
 		PublicKeyMaterial: []byte(publicKey),
+		TagSpecifications: ec2TagSpecificationsFromKeyValueTags(tags, ec2.ResourceTypeKeyPair),
 	}
 	resp, err := conn.ImportKeyPair(req)
 	if err != nil {
 		return fmt.Errorf("Error import KeyPair: %s", err)
 	}
 
-	d.SetId(*resp.KeyName)
-	return nil
+	d.SetId(aws.StringValue(resp.KeyName))
+
+	return resourceAwsKeyPairRead(d, meta)
 }
 
 func resourceAwsKeyPairRead(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*AWSClient).ec2conn
+	defaultTagsConfig := meta.(*AWSClient).DefaultTagsConfig
+	ignoreTagsConfig := meta.(*AWSClient).IgnoreTagsConfig
+
 	req := &ec2.DescribeKeyPairsInput{
 		KeyNames: []*string{aws.String(d.Id())},
 	}
 	resp, err := conn.DescribeKeyPairs(req)
 	if err != nil {
-		awsErr, ok := err.(awserr.Error)
-		if ok && awsErr.Code() == "InvalidKeyPair.NotFound" {
+		if isAWSErr(err, "InvalidKeyPair.NotFound", "") {
+			log.Printf("[WARN] Key Pair (%s) not found, removing from state", d.Id())
 			d.SetId("")
 			return nil
 		}
 		return fmt.Errorf("Error retrieving KeyPair: %s", err)
 	}
 
-	for _, keyPair := range resp.KeyPairs {
-		if *keyPair.KeyName == d.Id() {
-			d.Set("key_name", keyPair.KeyName)
-			d.Set("fingerprint", keyPair.KeyFingerprint)
-			return nil
+	if len(resp.KeyPairs) == 0 {
+		log.Printf("[WARN] Key Pair (%s) not found, removing from state", d.Id())
+		d.SetId("")
+		return nil
+	}
+
+	kp := resp.KeyPairs[0]
+
+	if aws.StringValue(kp.KeyName) != d.Id() {
+		return fmt.Errorf("Unable to find key pair within: %#v", resp.KeyPairs)
+	}
+
+	d.Set("key_name", kp.KeyName)
+	d.Set("fingerprint", kp.KeyFingerprint)
+	d.Set("key_pair_id", kp.KeyPairId)
+	tags := keyvaluetags.Ec2KeyValueTags(kp.Tags).IgnoreAws().IgnoreConfig(ignoreTagsConfig)
+
+	//lintignore:AWSR002
+	if err := d.Set("tags", tags.RemoveDefaultConfig(defaultTagsConfig).Map()); err != nil {
+		return fmt.Errorf("error setting tags: %w", err)
+	}
+
+	if err := d.Set("tags_all", tags.Map()); err != nil {
+		return fmt.Errorf("error setting tags_all: %w", err)
+	}
+
+	arn := arn.ARN{
+		Partition: meta.(*AWSClient).partition,
+		Service:   ec2.ServiceName,
+		Region:    meta.(*AWSClient).region,
+		AccountID: meta.(*AWSClient).accountid,
+		Resource:  fmt.Sprintf("key-pair/%s", d.Id()),
+	}.String()
+
+	d.Set("arn", arn)
+
+	return nil
+}
+
+func resourceAwsKeyPairUpdate(d *schema.ResourceData, meta interface{}) error {
+	conn := meta.(*AWSClient).ec2conn
+
+	if d.HasChange("tags_all") {
+		o, n := d.GetChange("tags_all")
+		if err := keyvaluetags.Ec2UpdateTags(conn, d.Get("key_pair_id").(string), o, n); err != nil {
+			return fmt.Errorf("error adding tags: %s", err)
 		}
 	}
 
-	return fmt.Errorf("Unable to find key pair within: %#v", resp.KeyPairs)
+	return resourceAwsKeyPairRead(d, meta)
 }
 
 func resourceAwsKeyPairDelete(d *schema.ResourceData, meta interface{}) error {

@@ -4,15 +4,16 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go/service/ec2"
-	"github.com/hashicorp/terraform/helper/resource"
-	"github.com/hashicorp/terraform/terraform"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 )
 
 func TestAccAWSDefaultVpc_basic(t *testing.T) {
 	var vpc ec2.Vpc
 
-	resource.Test(t, resource.TestCase{
+	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
+		ErrorCheck:   testAccErrorCheck(t, ec2.EndpointsID),
 		Providers:    testAccProviders,
 		CheckDestroy: testAccCheckAWSDefaultVpcDestroy,
 		Steps: []resource.TestStep{
@@ -27,12 +28,15 @@ func TestAccAWSDefaultVpc_basic(t *testing.T) {
 						"aws_default_vpc.foo", "tags.%", "1"),
 					resource.TestCheckResourceAttr(
 						"aws_default_vpc.foo", "tags.Name", "Default VPC"),
-					resource.TestCheckNoResourceAttr(
-						"aws_default_vpc.foo", "assign_generated_ipv6_cidr_block"),
-					resource.TestCheckNoResourceAttr(
-						"aws_default_vpc.foo", "ipv6_association_id"),
-					resource.TestCheckNoResourceAttr(
-						"aws_default_vpc.foo", "ipv6_cidr_block"),
+					resource.TestCheckResourceAttrSet(
+						"aws_default_vpc.foo", "arn"),
+					resource.TestCheckResourceAttr(
+						"aws_default_vpc.foo", "assign_generated_ipv6_cidr_block", "false"),
+					resource.TestCheckResourceAttr(
+						"aws_default_vpc.foo", "ipv6_association_id", ""),
+					resource.TestCheckResourceAttr(
+						"aws_default_vpc.foo", "ipv6_cidr_block", ""),
+					testAccCheckResourceAttrAccountID("aws_default_vpc.foo", "owner_id"),
 				),
 			},
 		},
@@ -45,13 +49,9 @@ func testAccCheckAWSDefaultVpcDestroy(s *terraform.State) error {
 }
 
 const testAccAWSDefaultVpcConfigBasic = `
-provider "aws" {
-    region = "us-west-2"
-}
-
 resource "aws_default_vpc" "foo" {
-	tags {
-		Name = "Default VPC"
-	}
+  tags = {
+    Name = "Default VPC"
+  }
 }
 `

@@ -9,9 +9,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/ec2"
-
-	"github.com/hashicorp/terraform/helper/resource"
-	"github.com/hashicorp/terraform/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
 func resourceAwsVpnConnectionRoute() *schema.Resource {
@@ -23,13 +22,13 @@ func resourceAwsVpnConnectionRoute() *schema.Resource {
 		Delete: resourceAwsVpnConnectionRouteDelete,
 
 		Schema: map[string]*schema.Schema{
-			"destination_cidr_block": &schema.Schema{
+			"destination_cidr_block": {
 				Type:     schema.TypeString,
 				Required: true,
 				ForceNew: true,
 			},
 
-			"vpn_connection_id": &schema.Schema{
+			"vpn_connection_id": {
 				Type:     schema.TypeString,
 				Required: true,
 				ForceNew: true,
@@ -106,7 +105,6 @@ func resourceAwsVpnConnectionRouteDelete(d *schema.ResourceData, meta interface{
 	})
 	if err != nil {
 		if ec2err, ok := err.(awserr.Error); ok && ec2err.Code() == "InvalidVpnConnectionID.NotFound" {
-			d.SetId("")
 			return nil
 		}
 		log.Printf("[ERROR] Error deleting VPN connection route: %s", err)
@@ -129,21 +127,17 @@ func resourceAwsVpnConnectionRouteDelete(d *schema.ResourceData, meta interface{
 		},
 	}
 	_, err = stateConf.WaitForState()
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
 func findConnectionRoute(conn *ec2.EC2, cidrBlock, vpnConnectionId string) (*ec2.VpnStaticRoute, error) {
 	resp, err := conn.DescribeVpnConnections(&ec2.DescribeVpnConnectionsInput{
 		Filters: []*ec2.Filter{
-			&ec2.Filter{
+			{
 				Name:   aws.String("route.destination-cidr-block"),
 				Values: []*string{aws.String(cidrBlock)},
 			},
-			&ec2.Filter{
+			{
 				Name:   aws.String("vpn-connection-id"),
 				Values: []*string{aws.String(vpnConnectionId)},
 			},
@@ -161,7 +155,7 @@ func findConnectionRoute(conn *ec2.EC2, cidrBlock, vpnConnectionId string) (*ec2
 	vpnConnection := resp.VpnConnections[0]
 
 	for _, r := range vpnConnection.Routes {
-		if *r.DestinationCidrBlock == cidrBlock && *r.State != "deleted" {
+		if aws.StringValue(r.DestinationCidrBlock) == cidrBlock && aws.StringValue(r.State) != "deleted" {
 			return r, nil
 		}
 	}

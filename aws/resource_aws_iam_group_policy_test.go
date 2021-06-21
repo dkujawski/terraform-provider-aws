@@ -1,83 +1,161 @@
 package aws
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/iam"
-	"github.com/hashicorp/terraform/helper/acctest"
-	"github.com/hashicorp/terraform/helper/resource"
-	"github.com/hashicorp/terraform/terraform"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/acctest"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 )
 
 func TestAccAWSIAMGroupPolicy_basic(t *testing.T) {
+	var groupPolicy1, groupPolicy2 iam.GetGroupPolicyOutput
 	rInt := acctest.RandInt()
-	resource.Test(t, resource.TestCase{
+	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
+		ErrorCheck:   testAccErrorCheck(t, iam.EndpointsID),
 		Providers:    testAccProviders,
 		CheckDestroy: testAccCheckIAMGroupPolicyDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: testAccIAMGroupPolicyConfig(rInt),
 				Check: resource.ComposeTestCheckFunc(
-					testAccCheckIAMGroupPolicy(
+					testAccCheckIAMGroupPolicyExists(
 						"aws_iam_group.group",
 						"aws_iam_group_policy.foo",
+						&groupPolicy1,
 					),
 				),
 			},
 			{
+				ResourceName:      "aws_iam_group_policy.foo",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+			{
 				Config: testAccIAMGroupPolicyConfigUpdate(rInt),
 				Check: resource.ComposeTestCheckFunc(
-					testAccCheckIAMGroupPolicy(
+					testAccCheckIAMGroupPolicyExists(
 						"aws_iam_group.group",
 						"aws_iam_group_policy.bar",
+						&groupPolicy2,
 					),
+					testAccCheckAWSIAMGroupPolicyNameChanged(&groupPolicy1, &groupPolicy2),
 				),
+			},
+			{
+				ResourceName:      "aws_iam_group_policy.bar",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+func TestAccAWSIAMGroupPolicy_disappears(t *testing.T) {
+	var out iam.GetGroupPolicyOutput
+	rInt := acctest.RandInt()
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		ErrorCheck:   testAccErrorCheck(t, iam.EndpointsID),
+		Providers:    testAccProviders,
+		CheckDestroy: testAccCheckIAMGroupPolicyDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccIAMGroupPolicyConfig(rInt),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckIAMGroupPolicyExists(
+						"aws_iam_group.group",
+						"aws_iam_group_policy.foo",
+						&out,
+					),
+					testAccCheckIAMGroupPolicyDisappears(&out),
+				),
+				ExpectNonEmptyPlan: true,
 			},
 		},
 	})
 }
 
 func TestAccAWSIAMGroupPolicy_namePrefix(t *testing.T) {
+	var groupPolicy1, groupPolicy2 iam.GetGroupPolicyOutput
 	rInt := acctest.RandInt()
-	resource.Test(t, resource.TestCase{
-		PreCheck:      func() { testAccPreCheck(t) },
-		IDRefreshName: "aws_iam_group_policy.test",
-		Providers:     testAccProviders,
-		CheckDestroy:  testAccCheckIAMGroupPolicyDestroy,
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		ErrorCheck:   testAccErrorCheck(t, iam.EndpointsID),
+		Providers:    testAccProviders,
+		CheckDestroy: testAccCheckIAMGroupPolicyDestroy,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccIAMGroupPolicyConfig_namePrefix(rInt),
+				Config: testAccIAMGroupPolicyConfig_namePrefix(rInt, "*"),
 				Check: resource.ComposeTestCheckFunc(
-					testAccCheckIAMGroupPolicy(
+					testAccCheckIAMGroupPolicyExists(
 						"aws_iam_group.test",
 						"aws_iam_group_policy.test",
+						&groupPolicy1,
 					),
 				),
+			},
+			{
+				Config: testAccIAMGroupPolicyConfig_namePrefix(rInt, "ec2:*"),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckIAMGroupPolicyExists(
+						"aws_iam_group.test",
+						"aws_iam_group_policy.test",
+						&groupPolicy2,
+					),
+					testAccCheckAWSIAMGroupPolicyNameMatches(&groupPolicy1, &groupPolicy2),
+				),
+			},
+			{
+				ResourceName:            "aws_iam_group_policy.test",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"name_prefix"},
 			},
 		},
 	})
 }
 
 func TestAccAWSIAMGroupPolicy_generatedName(t *testing.T) {
+	var groupPolicy1, groupPolicy2 iam.GetGroupPolicyOutput
 	rInt := acctest.RandInt()
-	resource.Test(t, resource.TestCase{
-		PreCheck:      func() { testAccPreCheck(t) },
-		IDRefreshName: "aws_iam_group_policy.test",
-		Providers:     testAccProviders,
-		CheckDestroy:  testAccCheckIAMGroupPolicyDestroy,
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		ErrorCheck:   testAccErrorCheck(t, iam.EndpointsID),
+		Providers:    testAccProviders,
+		CheckDestroy: testAccCheckIAMGroupPolicyDestroy,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccIAMGroupPolicyConfig_generatedName(rInt),
+				Config: testAccIAMGroupPolicyConfig_generatedName(rInt, "*"),
 				Check: resource.ComposeTestCheckFunc(
-					testAccCheckIAMGroupPolicy(
+					testAccCheckIAMGroupPolicyExists(
 						"aws_iam_group.test",
 						"aws_iam_group_policy.test",
+						&groupPolicy1,
 					),
 				),
+			},
+			{
+				Config: testAccIAMGroupPolicyConfig_generatedName(rInt, "ec2:*"),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckIAMGroupPolicyExists(
+						"aws_iam_group.test",
+						"aws_iam_group_policy.test",
+						&groupPolicy2,
+					),
+					testAccCheckAWSIAMGroupPolicyNameMatches(&groupPolicy1, &groupPolicy2),
+				),
+			},
+			{
+				ResourceName:      "aws_iam_group_policy.test",
+				ImportState:       true,
+				ImportStateVerify: true,
 			},
 		},
 	})
@@ -91,31 +169,51 @@ func testAccCheckIAMGroupPolicyDestroy(s *terraform.State) error {
 			continue
 		}
 
-		group, name := resourceAwsIamGroupPolicyParseId(rs.Primary.ID)
+		group, name, err := resourceAwsIamGroupPolicyParseId(rs.Primary.ID)
+		if err != nil {
+			return err
+		}
 
 		request := &iam.GetGroupPolicyInput{
 			PolicyName: aws.String(name),
 			GroupName:  aws.String(group),
 		}
 
-		_, err := conn.GetGroupPolicy(request)
+		getResp, err := conn.GetGroupPolicy(request)
 		if err != nil {
-			// Verify the error is what we want
-			if ae, ok := err.(awserr.Error); ok && ae.Code() == "NoSuchEntity" {
+			if isAWSErr(err, iam.ErrCodeNoSuchEntityException, "") {
+				// none found, that's good
 				continue
 			}
-			return err
+			return fmt.Errorf("Error reading IAM policy %s from group %s: %s", name, group, err)
 		}
 
-		return fmt.Errorf("still exists")
+		if getResp != nil {
+			return fmt.Errorf("Found IAM group policy, expected none: %s", getResp)
+		}
 	}
 
 	return nil
 }
 
-func testAccCheckIAMGroupPolicy(
+func testAccCheckIAMGroupPolicyDisappears(out *iam.GetGroupPolicyOutput) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		iamconn := testAccProvider.Meta().(*AWSClient).iamconn
+
+		params := &iam.DeleteGroupPolicyInput{
+			PolicyName: out.PolicyName,
+			GroupName:  out.GroupName,
+		}
+
+		_, err := iamconn.DeleteGroupPolicy(params)
+		return err
+	}
+}
+
+func testAccCheckIAMGroupPolicyExists(
 	iamGroupResource string,
-	iamGroupPolicyResource string) resource.TestCheckFunc {
+	iamGroupPolicyResource string,
+	groupPolicy *iam.GetGroupPolicyOutput) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[iamGroupResource]
 		if !ok {
@@ -132,8 +230,12 @@ func testAccCheckIAMGroupPolicy(
 		}
 
 		iamconn := testAccProvider.Meta().(*AWSClient).iamconn
-		group, name := resourceAwsIamGroupPolicyParseId(policy.Primary.ID)
-		_, err := iamconn.GetGroupPolicy(&iam.GetGroupPolicyInput{
+		group, name, err := resourceAwsIamGroupPolicyParseId(policy.Primary.ID)
+		if err != nil {
+			return err
+		}
+
+		output, err := iamconn.GetGroupPolicy(&iam.GetGroupPolicyInput{
 			GroupName:  aws.String(group),
 			PolicyName: aws.String(name),
 		})
@@ -142,94 +244,143 @@ func testAccCheckIAMGroupPolicy(
 			return err
 		}
 
+		*groupPolicy = *output
+
+		return nil
+	}
+}
+
+func testAccCheckAWSIAMGroupPolicyNameChanged(i, j *iam.GetGroupPolicyOutput) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		if aws.StringValue(i.PolicyName) == aws.StringValue(j.PolicyName) {
+			return errors.New("IAM Group Policy name did not change")
+		}
+
+		return nil
+	}
+}
+
+func testAccCheckAWSIAMGroupPolicyNameMatches(i, j *iam.GetGroupPolicyOutput) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		if aws.StringValue(i.PolicyName) != aws.StringValue(j.PolicyName) {
+			return errors.New("IAM Group Policy name did not match")
+		}
+
 		return nil
 	}
 }
 
 func testAccIAMGroupPolicyConfig(rInt int) string {
 	return fmt.Sprintf(`
-	resource "aws_iam_group" "group" {
-		name = "test_group_%d"
-		path = "/"
-	}
+resource "aws_iam_group" "group" {
+  name = "test_group_%d"
+  path = "/"
+}
 
-	resource "aws_iam_group_policy" "foo" {
-		name = "foo_policy_%d"
-		group = "${aws_iam_group.group.name}"
-		policy = <<EOF
+resource "aws_iam_group_policy" "foo" {
+  name  = "foo_policy_%d"
+  group = aws_iam_group.group.name
+
+  policy = <<EOF
 {
-	"Version": "2012-10-17",
-	"Statement": {
-		"Effect": "Allow",
-		"Action": "*",
-		"Resource": "*"
-	}
+  "Version": "2012-10-17",
+  "Statement": {
+    "Effect": "Allow",
+    "Action": "*",
+    "Resource": "*"
+  }
 }
 EOF
-	}`, rInt, rInt)
+}
+`, rInt, rInt)
 }
 
-func testAccIAMGroupPolicyConfig_namePrefix(rInt int) string {
+func testAccIAMGroupPolicyConfig_namePrefix(rInt int, policyAction string) string {
 	return fmt.Sprintf(`
-	resource "aws_iam_group" "test" {
-		name = "test_group_%d"
-		path = "/"
-	}
+resource "aws_iam_group" "test" {
+  name = "test_group_%d"
+  path = "/"
+}
 
-	resource "aws_iam_group_policy" "test" {
-		name_prefix = "test-%d"
-		group = "${aws_iam_group.test.name}"
-		policy = <<EOF
+resource "aws_iam_group_policy" "test" {
+  name_prefix = "test-%d"
+  group       = aws_iam_group.test.name
+
+  policy = <<EOF
 {
-	"Version": "2012-10-17",
-	"Statement": {
-		"Effect": "Allow",
-		"Action": "*",
-		"Resource": "*"
-	}
+  "Version": "2012-10-17",
+  "Statement": {
+    "Effect": "Allow",
+    "Action": "%s",
+    "Resource": "*"
+  }
 }
 EOF
-	}`, rInt, rInt)
+}
+`, rInt, rInt, policyAction)
 }
 
-func testAccIAMGroupPolicyConfig_generatedName(rInt int) string {
+func testAccIAMGroupPolicyConfig_generatedName(rInt int, policyAction string) string {
 	return fmt.Sprintf(`
-	resource "aws_iam_group" "test" {
-		name = "test_group_%d"
-		path = "/"
-	}
+resource "aws_iam_group" "test" {
+  name = "test_group_%d"
+  path = "/"
+}
 
-	resource "aws_iam_group_policy" "test" {
-		group = "${aws_iam_group.test.name}"
-		policy = <<EOF
+resource "aws_iam_group_policy" "test" {
+  group = aws_iam_group.test.name
+
+  policy = <<EOF
 {
-	"Version": "2012-10-17",
-	"Statement": {
-		"Effect": "Allow",
-		"Action": "*",
-		"Resource": "*"
-	}
+  "Version": "2012-10-17",
+  "Statement": {
+    "Effect": "Allow",
+    "Action": "%s",
+    "Resource": "*"
+  }
 }
 EOF
-	}`, rInt)
+}
+`, rInt, policyAction)
 }
 
 func testAccIAMGroupPolicyConfigUpdate(rInt int) string {
 	return fmt.Sprintf(`
-	resource "aws_iam_group" "group" {
-		name = "test_group_%d"
-		path = "/"
-	}
+resource "aws_iam_group" "group" {
+  name = "test_group_%d"
+  path = "/"
+}
 
-	resource "aws_iam_group_policy" "foo" {
-		name = "foo_policy_%d"
-		group = "${aws_iam_group.group.name}"
-		policy = "{\"Version\":\"2012-10-17\",\"Statement\":{\"Effect\":\"Allow\",\"Action\":\"*\",\"Resource\":\"*\"}}"
-	}
+resource "aws_iam_group_policy" "foo" {
+  name  = "foo_policy_%d"
+  group = aws_iam_group.group.name
 
-	resource "aws_iam_group_policy" "bar" {
-		name = "bar_policy_%d"
-		group = "${aws_iam_group.group.name}"
-		policy = "{\"Version\":\"2012-10-17\",\"Statement\":{\"Effect\":\"Allow\",\"Action\":\"*\",\"Resource\":\"*\"}}"
-	}`, rInt, rInt, rInt)
+  policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": {
+    "Effect": "Allow",
+    "Action": "*",
+    "Resource": "*"
+  }
+}
+EOF
+}
+
+resource "aws_iam_group_policy" "bar" {
+  name  = "bar_policy_%d"
+  group = aws_iam_group.group.name
+
+  policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": {
+    "Effect": "Allow",
+    "Action": "*",
+    "Resource": "*"
+  }
+}
+EOF
+}
+`, rInt, rInt, rInt)
 }

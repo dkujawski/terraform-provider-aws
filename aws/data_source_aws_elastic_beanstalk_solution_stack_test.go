@@ -5,14 +5,16 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/hashicorp/terraform/helper/resource"
-	"github.com/hashicorp/terraform/terraform"
+	"github.com/aws/aws-sdk-go/service/elasticbeanstalk"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 )
 
-func TestAccAWSElasticBeanstalkSolutionStackDataSource(t *testing.T) {
-	resource.Test(t, resource.TestCase{
-		PreCheck:  func() { testAccPreCheck(t) },
-		Providers: testAccProviders,
+func TestAccAWSElasticBeanstalkSolutionStackDataSource_basic(t *testing.T) {
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:   func() { testAccPreCheck(t) },
+		ErrorCheck: testAccErrorCheck(t, elasticbeanstalk.EndpointsID),
+		Providers:  testAccProviders,
 		Steps: []resource.TestStep{
 			{
 				Config: testAccCheckAwsElasticBeanstalkSolutionStackDataSourceConfig,
@@ -23,61 +25,6 @@ func TestAccAWSElasticBeanstalkSolutionStackDataSource(t *testing.T) {
 			},
 		},
 	})
-}
-
-func TestResourceValidateSolutionStackNameRegex(t *testing.T) {
-	type testCases struct {
-		Value    string
-		ErrCount int
-	}
-
-	invalidCases := []testCases{
-		{
-			Value:    `\`,
-			ErrCount: 1,
-		},
-		{
-			Value:    `**`,
-			ErrCount: 1,
-		},
-		{
-			Value:    `(.+`,
-			ErrCount: 1,
-		},
-	}
-
-	for _, tc := range invalidCases {
-		_, errors := validateSolutionStackNameRegex(tc.Value, "name_regex")
-		if len(errors) != tc.ErrCount {
-			t.Fatalf("Expected %q to trigger a validation error.", tc.Value)
-		}
-	}
-
-	validCases := []testCases{
-		{
-			Value:    `\/`,
-			ErrCount: 0,
-		},
-		{
-			Value:    `.*`,
-			ErrCount: 0,
-		},
-		{
-			Value:    `\b(?:\d{1,3}\.){3}\d{1,3}\b`,
-			ErrCount: 0,
-		},
-	}
-
-	for _, tc := range validCases {
-		_, errors := validateSolutionStackNameRegex(tc.Value, "name_regex")
-		if len(errors) != tc.ErrCount {
-			t.Fatalf("Expected %q not to trigger a validation error.", tc.Value)
-		}
-	}
-}
-
-func testAccCheckAwsElasticBeanstalkSolutionStackDataSourceDestroy(s *terraform.State) error {
-	return nil
 }
 
 func testAccCheckAwsElasticBeanstalkSolutionStackDataSourceID(n string) resource.TestCheckFunc {
@@ -97,7 +44,7 @@ func testAccCheckAwsElasticBeanstalkSolutionStackDataSourceID(n string) resource
 
 const testAccCheckAwsElasticBeanstalkSolutionStackDataSourceConfig = `
 data "aws_elastic_beanstalk_solution_stack" "multi_docker" {
-	most_recent = true
-	name_regex  = "^64bit Amazon Linux (.*) Multi-container Docker (.*)$"
+  most_recent = true
+  name_regex  = "^64bit Amazon Linux (.*) Multi-container Docker (.*)$"
 }
 `

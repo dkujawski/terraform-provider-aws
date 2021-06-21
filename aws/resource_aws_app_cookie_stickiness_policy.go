@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/elb"
-	"github.com/hashicorp/terraform/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
 func resourceAwsAppCookieStickinessPolicy() *schema.Resource {
@@ -20,9 +20,12 @@ func resourceAwsAppCookieStickinessPolicy() *schema.Resource {
 		Create: resourceAwsAppCookieStickinessPolicyCreate,
 		Read:   resourceAwsAppCookieStickinessPolicyRead,
 		Delete: resourceAwsAppCookieStickinessPolicyDelete,
+		Importer: &schema.ResourceImporter{
+			State: schema.ImportStatePassthrough,
+		},
 
 		Schema: map[string]*schema.Schema{
-			"name": &schema.Schema{
+			"name": {
 				Type:     schema.TypeString,
 				Required: true,
 				ForceNew: true,
@@ -36,19 +39,19 @@ func resourceAwsAppCookieStickinessPolicy() *schema.Resource {
 				},
 			},
 
-			"load_balancer": &schema.Schema{
+			"load_balancer": {
 				Type:     schema.TypeString,
 				Required: true,
 				ForceNew: true,
 			},
 
-			"lb_port": &schema.Schema{
+			"lb_port": {
 				Type:     schema.TypeInt,
 				Required: true,
 				ForceNew: true,
 			},
 
-			"cookie_name": &schema.Schema{
+			"cookie_name": {
 				Type:     schema.TypeString,
 				Required: true,
 				ForceNew: true,
@@ -129,14 +132,16 @@ func resourceAwsAppCookieStickinessPolicyRead(d *schema.ResourceData, meta inter
 	// cookie expiration, in these descriptions.
 	policyDesc := getResp.PolicyDescriptions[0]
 	cookieAttr := policyDesc.PolicyAttributeDescriptions[0]
-	if *cookieAttr.AttributeName != "CookieName" {
+	if aws.StringValue(cookieAttr.AttributeName) != "CookieName" {
 		return fmt.Errorf("Unable to find cookie Name.")
 	}
 
 	d.Set("cookie_name", cookieAttr.AttributeValue)
 	d.Set("name", policyName)
 	d.Set("load_balancer", lbName)
-	d.Set("lb_port", lbPort)
+
+	lbPortInt, _ := strconv.Atoi(lbPort)
+	d.Set("lb_port", lbPortInt)
 
 	return nil
 }
@@ -163,12 +168,12 @@ func resourceAwsELBSticknessPolicyAssigned(policyName, lbName, lbPort string, el
 	lb := describeResp.LoadBalancerDescriptions[0]
 	assigned := false
 	for _, listener := range lb.ListenerDescriptions {
-		if lbPort != strconv.Itoa(int(*listener.Listener.LoadBalancerPort)) {
+		if listener == nil || listener.Listener == nil || lbPort != strconv.Itoa(int(aws.Int64Value(listener.Listener.LoadBalancerPort))) {
 			continue
 		}
 
 		for _, name := range listener.PolicyNames {
-			if policyName == *name {
+			if policyName == aws.StringValue(name) {
 				assigned = true
 				break
 			}

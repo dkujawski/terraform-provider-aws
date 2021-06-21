@@ -6,9 +6,9 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/hashicorp/terraform/helper/acctest"
-	"github.com/hashicorp/terraform/helper/resource"
-	"github.com/hashicorp/terraform/terraform"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/acctest"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 )
 
 func TestAccAWSDynamoDbTableItem_basic(t *testing.T) {
@@ -24,8 +24,9 @@ func TestAccAWSDynamoDbTableItem_basic(t *testing.T) {
 	"four": {"N": "44444"}
 }`
 
-	resource.Test(t, resource.TestCase{
+	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
+		ErrorCheck:   testAccErrorCheck(t, dynamodb.EndpointsID),
 		Providers:    testAccProviders,
 		CheckDestroy: testAccCheckAWSDynamoDbItemDestroy,
 		Steps: []resource.TestStep{
@@ -58,8 +59,9 @@ func TestAccAWSDynamoDbTableItem_rangeKey(t *testing.T) {
 	"four": {"N": "44444"}
 }`
 
-	resource.Test(t, resource.TestCase{
+	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
+		ErrorCheck:   testAccErrorCheck(t, dynamodb.EndpointsID),
 		Providers:    testAccProviders,
 		CheckDestroy: testAccCheckAWSDynamoDbItemDestroy,
 		Steps: []resource.TestStep{
@@ -101,8 +103,9 @@ func TestAccAWSDynamoDbTableItem_withMultipleItems(t *testing.T) {
 	"four": {"S": "four"}
 }`
 
-	resource.Test(t, resource.TestCase{
+	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
+		ErrorCheck:   testAccErrorCheck(t, dynamodb.EndpointsID),
 		Providers:    testAccProviders,
 		CheckDestroy: testAccCheckAWSDynamoDbItemDestroy,
 		Steps: []resource.TestStep{
@@ -148,8 +151,9 @@ func TestAccAWSDynamoDbTableItem_update(t *testing.T) {
 	"new": {"S": "shiny new one"}
 }`
 
-	resource.Test(t, resource.TestCase{
+	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
+		ErrorCheck:   testAccErrorCheck(t, dynamodb.EndpointsID),
 		Providers:    testAccProviders,
 		CheckDestroy: testAccCheckAWSDynamoDbItemDestroy,
 		Steps: []resource.TestStep{
@@ -169,6 +173,56 @@ func TestAccAWSDynamoDbTableItem_update(t *testing.T) {
 					testAccCheckAWSDynamoDbTableItemExists("aws_dynamodb_table_item.test", &conf),
 					testAccCheckAWSDynamoDbTableItemCount(tableName, 1),
 					resource.TestCheckResourceAttr("aws_dynamodb_table_item.test", "hash_key", hashKey),
+					resource.TestCheckResourceAttr("aws_dynamodb_table_item.test", "table_name", tableName),
+					resource.TestCheckResourceAttr("aws_dynamodb_table_item.test", "item", itemAfter+"\n"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccAWSDynamoDbTableItem_updateWithRangeKey(t *testing.T) {
+	var conf dynamodb.GetItemOutput
+
+	tableName := fmt.Sprintf("tf-acc-test-%s", acctest.RandString(8))
+	hashKey := "hashKey"
+	rangeKey := "rangeKey"
+
+	itemBefore := `{
+	"hashKey": {"S": "before"},
+	"rangeKey": {"S": "rangeBefore"},
+	"value": {"S": "valueBefore"}
+}`
+	itemAfter := `{
+	"hashKey": {"S": "before"},
+	"rangeKey": {"S": "rangeAfter"},
+	"value": {"S": "valueAfter"}
+}`
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		ErrorCheck:   testAccErrorCheck(t, dynamodb.EndpointsID),
+		Providers:    testAccProviders,
+		CheckDestroy: testAccCheckAWSDynamoDbItemDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAWSDynamoDbItemConfigWithRangeKey(tableName, hashKey, rangeKey, itemBefore),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckAWSDynamoDbTableItemExists("aws_dynamodb_table_item.test", &conf),
+					testAccCheckAWSDynamoDbTableItemCount(tableName, 1),
+					resource.TestCheckResourceAttr("aws_dynamodb_table_item.test", "hash_key", hashKey),
+					resource.TestCheckResourceAttr("aws_dynamodb_table_item.test", "range_key", rangeKey),
+					resource.TestCheckResourceAttr("aws_dynamodb_table_item.test", "table_name", tableName),
+					resource.TestCheckResourceAttr("aws_dynamodb_table_item.test", "item", itemBefore+"\n"),
+				),
+			},
+			{
+				Config: testAccAWSDynamoDbItemConfigWithRangeKey(tableName, hashKey, rangeKey, itemAfter),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckAWSDynamoDbTableItemExists("aws_dynamodb_table_item.test", &conf),
+					testAccCheckAWSDynamoDbTableItemCount(tableName, 1),
+					resource.TestCheckResourceAttr("aws_dynamodb_table_item.test", "hash_key", hashKey),
+					resource.TestCheckResourceAttr("aws_dynamodb_table_item.test", "range_key", rangeKey),
 					resource.TestCheckResourceAttr("aws_dynamodb_table_item.test", "table_name", tableName),
 					resource.TestCheckResourceAttr("aws_dynamodb_table_item.test", "item", itemAfter+"\n"),
 				),
@@ -241,7 +295,7 @@ func testAccCheckAWSDynamoDbTableItemExists(n string, item *dynamodb.GetItemOutp
 			ExpressionAttributeNames: buildDynamoDbExpressionAttributeNames(attributes),
 		})
 		if err != nil {
-			return fmt.Errorf("[ERROR] Problem getting table item '%s': %s", rs.Primary.ID, err)
+			return fmt.Errorf("Problem getting table item '%s': %s", rs.Primary.ID, err)
 		}
 
 		*item = *result
@@ -272,10 +326,10 @@ func testAccCheckAWSDynamoDbTableItemCount(tableName string, count int64) resour
 func testAccAWSDynamoDbItemConfigBasic(tableName, hashKey, item string) string {
 	return fmt.Sprintf(`
 resource "aws_dynamodb_table" "test" {
-  name = "%s"
-  read_capacity = 10
+  name           = "%s"
+  read_capacity  = 10
   write_capacity = 10
-  hash_key = "%s"
+  hash_key       = "%s"
 
   attribute {
     name = "%s"
@@ -284,8 +338,9 @@ resource "aws_dynamodb_table" "test" {
 }
 
 resource "aws_dynamodb_table_item" "test" {
-  table_name = "${aws_dynamodb_table.test.name}"
-  hash_key = "${aws_dynamodb_table.test.hash_key}"
+  table_name = aws_dynamodb_table.test.name
+  hash_key   = aws_dynamodb_table.test.hash_key
+
   item = <<ITEM
 %s
 ITEM
@@ -296,16 +351,17 @@ ITEM
 func testAccAWSDynamoDbItemConfigWithRangeKey(tableName, hashKey, rangeKey, item string) string {
 	return fmt.Sprintf(`
 resource "aws_dynamodb_table" "test" {
-  name = "%s"
-  read_capacity = 10
+  name           = "%s"
+  read_capacity  = 10
   write_capacity = 10
-  hash_key = "%s"
-  range_key = "%s"
+  hash_key       = "%s"
+  range_key      = "%s"
 
   attribute {
     name = "%s"
     type = "S"
   }
+
   attribute {
     name = "%s"
     type = "S"
@@ -313,9 +369,10 @@ resource "aws_dynamodb_table" "test" {
 }
 
 resource "aws_dynamodb_table_item" "test" {
-  table_name = "${aws_dynamodb_table.test.name}"
-  hash_key = "${aws_dynamodb_table.test.hash_key}"
-  range_key = "${aws_dynamodb_table.test.range_key}"
+  table_name = aws_dynamodb_table.test.name
+  hash_key   = aws_dynamodb_table.test.hash_key
+  range_key  = aws_dynamodb_table.test.range_key
+
   item = <<ITEM
 %s
 ITEM
@@ -326,16 +383,17 @@ ITEM
 func testAccAWSDynamoDbItemConfigWithMultipleItems(tableName, hashKey, rangeKey, firstItem, secondItem string) string {
 	return fmt.Sprintf(`
 resource "aws_dynamodb_table" "test" {
-  name = "%s"
-  read_capacity = 10
+  name           = "%s"
+  read_capacity  = 10
   write_capacity = 10
-  hash_key = "%s"
-  range_key = "%s"
+  hash_key       = "%s"
+  range_key      = "%s"
 
   attribute {
     name = "%s"
     type = "S"
   }
+
   attribute {
     name = "%s"
     type = "S"
@@ -343,18 +401,20 @@ resource "aws_dynamodb_table" "test" {
 }
 
 resource "aws_dynamodb_table_item" "test1" {
-  table_name = "${aws_dynamodb_table.test.name}"
-  hash_key = "${aws_dynamodb_table.test.hash_key}"
-  range_key = "${aws_dynamodb_table.test.range_key}"
+  table_name = aws_dynamodb_table.test.name
+  hash_key   = aws_dynamodb_table.test.hash_key
+  range_key  = aws_dynamodb_table.test.range_key
+
   item = <<ITEM
 %s
 ITEM
 }
 
 resource "aws_dynamodb_table_item" "test2" {
-  table_name = "${aws_dynamodb_table.test.name}"
-  hash_key = "${aws_dynamodb_table.test.hash_key}"
-  range_key = "${aws_dynamodb_table.test.range_key}"
+  table_name = aws_dynamodb_table.test.name
+  hash_key   = aws_dynamodb_table.test.hash_key
+  range_key  = aws_dynamodb_table.test.range_key
+
   item = <<ITEM
 %s
 ITEM

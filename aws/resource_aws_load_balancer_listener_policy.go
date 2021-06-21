@@ -8,7 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/elb"
-	"github.com/hashicorp/terraform/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
 func resourceAwsLoadBalancerListenerPolicies() *schema.Resource {
@@ -19,19 +19,19 @@ func resourceAwsLoadBalancerListenerPolicies() *schema.Resource {
 		Delete: resourceAwsLoadBalancerListenerPoliciesDelete,
 
 		Schema: map[string]*schema.Schema{
-			"load_balancer_name": &schema.Schema{
+			"load_balancer_name": {
 				Type:     schema.TypeString,
 				Required: true,
 			},
 
-			"policy_names": &schema.Schema{
+			"policy_names": {
 				Type:     schema.TypeSet,
 				Elem:     &schema.Schema{Type: schema.TypeString},
 				Optional: true,
 				Set:      schema.HashString,
 			},
 
-			"load_balancer_port": &schema.Schema{
+			"load_balancer_port": {
 				Type:     schema.TypeInt,
 				Required: true,
 			},
@@ -46,7 +46,7 @@ func resourceAwsLoadBalancerListenerPoliciesCreate(d *schema.ResourceData, meta 
 
 	policyNames := []*string{}
 	if v, ok := d.GetOk("policy_names"); ok {
-		policyNames = expandStringList(v.(*schema.Set).List())
+		policyNames = expandStringSet(v.(*schema.Set))
 	}
 
 	setOpts := &elb.SetLoadBalancerPoliciesOfListenerInput{
@@ -96,13 +96,15 @@ func resourceAwsLoadBalancerListenerPoliciesRead(d *schema.ResourceData, meta in
 			continue
 		}
 
-		for _, name := range listener.PolicyNames {
-			policyNames = append(policyNames, name)
-		}
+		policyNames = append(policyNames, listener.PolicyNames...)
 	}
 
 	d.Set("load_balancer_name", loadBalancerName)
-	d.Set("load_balancer_port", loadBalancerPort)
+	loadBalancerPortVal, err := strconv.ParseInt(loadBalancerPort, 10, 64)
+	if err != nil {
+		return fmt.Errorf("error parsing load balancer port: %s", err)
+	}
+	d.Set("load_balancer_port", loadBalancerPortVal)
 	d.Set("policy_names", flattenStringList(policyNames))
 
 	return nil
@@ -128,7 +130,6 @@ func resourceAwsLoadBalancerListenerPoliciesDelete(d *schema.ResourceData, meta 
 		return fmt.Errorf("Error setting LoadBalancerPoliciesOfListener: %s", err)
 	}
 
-	d.SetId("")
 	return nil
 }
 

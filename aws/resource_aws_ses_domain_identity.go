@@ -3,10 +3,13 @@ package aws
 import (
 	"fmt"
 	"log"
+	"regexp"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/arn"
 	"github.com/aws/aws-sdk-go/service/ses"
-	"github.com/hashicorp/terraform/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 )
 
 func resourceAwsSesDomainIdentity() *schema.Resource {
@@ -24,9 +27,10 @@ func resourceAwsSesDomainIdentity() *schema.Resource {
 				Computed: true,
 			},
 			"domain": {
-				Type:     schema.TypeString,
-				Required: true,
-				ForceNew: true,
+				Type:         schema.TypeString,
+				Required:     true,
+				ForceNew:     true,
+				ValidateFunc: validation.StringDoesNotMatch(regexp.MustCompile(`\.$`), "cannot end with a period"),
 			},
 			"verification_token": {
 				Type:     schema.TypeString,
@@ -37,7 +41,7 @@ func resourceAwsSesDomainIdentity() *schema.Resource {
 }
 
 func resourceAwsSesDomainIdentityCreate(d *schema.ResourceData, meta interface{}) error {
-	conn := meta.(*AWSClient).sesConn
+	conn := meta.(*AWSClient).sesconn
 
 	domainName := d.Get("domain").(string)
 
@@ -56,7 +60,7 @@ func resourceAwsSesDomainIdentityCreate(d *schema.ResourceData, meta interface{}
 }
 
 func resourceAwsSesDomainIdentityRead(d *schema.ResourceData, meta interface{}) error {
-	conn := meta.(*AWSClient).sesConn
+	conn := meta.(*AWSClient).sesconn
 
 	domainName := d.Id()
 	d.Set("domain", domainName)
@@ -80,13 +84,20 @@ func resourceAwsSesDomainIdentityRead(d *schema.ResourceData, meta interface{}) 
 		return nil
 	}
 
-	d.Set("arn", fmt.Sprintf("arn:%s:ses:%s:%s:identity/%s", meta.(*AWSClient).partition, meta.(*AWSClient).region, meta.(*AWSClient).accountid, d.Id()))
+	arn := arn.ARN{
+		Partition: meta.(*AWSClient).partition,
+		Service:   "ses",
+		Region:    meta.(*AWSClient).region,
+		AccountID: meta.(*AWSClient).accountid,
+		Resource:  fmt.Sprintf("identity/%s", d.Id()),
+	}.String()
+	d.Set("arn", arn)
 	d.Set("verification_token", verificationAttrs.VerificationToken)
 	return nil
 }
 
 func resourceAwsSesDomainIdentityDelete(d *schema.ResourceData, meta interface{}) error {
-	conn := meta.(*AWSClient).sesConn
+	conn := meta.(*AWSClient).sesconn
 
 	domainName := d.Get("domain").(string)
 

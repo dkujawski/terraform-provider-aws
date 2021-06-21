@@ -3,22 +3,76 @@ package aws
 import (
 	"errors"
 	"fmt"
+	"log"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/lightsail"
-	"github.com/hashicorp/terraform/helper/acctest"
-	"github.com/hashicorp/terraform/helper/resource"
-	"github.com/hashicorp/terraform/terraform"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/acctest"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 )
+
+func init() {
+	resource.AddTestSweepers("aws_lightsail_static_ip", &resource.Sweeper{
+		Name: "aws_lightsail_static_ip",
+		F:    testSweepLightsailStaticIps,
+	})
+}
+
+func testSweepLightsailStaticIps(region string) error {
+	client, err := sharedClientForRegion(region)
+	if err != nil {
+		return fmt.Errorf("Error getting client: %s", err)
+	}
+	conn := client.(*AWSClient).lightsailconn
+
+	input := &lightsail.GetStaticIpsInput{}
+
+	for {
+		output, err := conn.GetStaticIps(input)
+		if err != nil {
+			if testSweepSkipSweepError(err) {
+				log.Printf("[WARN] Skipping Lightsail Static IP sweep for %s: %s", region, err)
+				return nil
+			}
+			return fmt.Errorf("Error retrieving Lightsail Static IPs: %s", err)
+		}
+
+		if len(output.StaticIps) == 0 {
+			log.Print("[DEBUG] No Lightsail Static IPs to sweep")
+			return nil
+		}
+
+		for _, staticIp := range output.StaticIps {
+			name := aws.StringValue(staticIp.Name)
+
+			log.Printf("[INFO] Deleting Lightsail Static IP %s", name)
+			_, err := conn.ReleaseStaticIp(&lightsail.ReleaseStaticIpInput{
+				StaticIpName: aws.String(name),
+			})
+			if err != nil {
+				return fmt.Errorf("Error deleting Lightsail Static IP %s: %s", name, err)
+			}
+		}
+
+		if output.NextPageToken == nil {
+			break
+		}
+		input.PageToken = output.NextPageToken
+	}
+
+	return nil
+}
 
 func TestAccAWSLightsailStaticIp_basic(t *testing.T) {
 	var staticIp lightsail.StaticIp
 	staticIpName := fmt.Sprintf("tf-test-lightsail-%s", acctest.RandString(5))
 
-	resource.Test(t, resource.TestCase{
-		PreCheck:     func() { testAccPreCheck(t) },
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t); testAccPreCheckAWSLightsail(t) },
+		ErrorCheck:   testAccErrorCheck(t, lightsail.EndpointsID),
 		Providers:    testAccProviders,
 		CheckDestroy: testAccCheckAWSLightsailStaticIpDestroy,
 		Steps: []resource.TestStep{
@@ -49,8 +103,9 @@ func TestAccAWSLightsailStaticIp_disappears(t *testing.T) {
 		return nil
 	}
 
-	resource.Test(t, resource.TestCase{
-		PreCheck:     func() { testAccPreCheck(t) },
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t); testAccPreCheckAWSLightsail(t) },
+		ErrorCheck:   testAccErrorCheck(t, lightsail.EndpointsID),
 		Providers:    testAccProviders,
 		CheckDestroy: testAccCheckAWSLightsailStaticIpDestroy,
 		Steps: []resource.TestStep{
@@ -96,7 +151,6 @@ func testAccCheckAWSLightsailStaticIpExists(n string, staticIp *lightsail.Static
 }
 
 func testAccCheckAWSLightsailStaticIpDestroy(s *terraform.State) error {
-
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != "aws_lightsail_static_ip" {
 			continue
@@ -128,9 +182,6 @@ func testAccCheckAWSLightsailStaticIpDestroy(s *terraform.State) error {
 
 func testAccAWSLightsailStaticIpConfig_basic(staticIpName string) string {
 	return fmt.Sprintf(`
-provider "aws" {
-  region = "us-east-1"
-}
 resource "aws_lightsail_static_ip" "test" {
   name = "%s"
 }

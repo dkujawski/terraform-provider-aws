@@ -8,8 +8,9 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/arn"
 	"github.com/aws/aws-sdk-go/service/directconnect"
-	"github.com/hashicorp/terraform/helper/resource"
-	"github.com/hashicorp/terraform/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/terraform-providers/terraform-provider-aws/aws/internal/keyvaluetags"
 )
 
 func resourceAwsDxConnection() *schema.Resource {
@@ -36,25 +37,46 @@ func resourceAwsDxConnection() *schema.Resource {
 				Type:         schema.TypeString,
 				Required:     true,
 				ForceNew:     true,
-				ValidateFunc: validateDxConnectionBandWidth,
+				ValidateFunc: validateDxConnectionBandWidth(),
 			},
 			"location": {
 				Type:     schema.TypeString,
 				Required: true,
 				ForceNew: true,
 			},
-			"tags": tagsSchema(),
+			"jumbo_frame_capable": {
+				Type:     schema.TypeBool,
+				Computed: true,
+			},
+			"tags":     tagsSchema(),
+			"tags_all": tagsSchemaComputed(),
+			"has_logical_redundancy": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
+			"aws_device": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
 		},
+
+		CustomizeDiff: SetTagsDiff,
 	}
 }
 
 func resourceAwsDxConnectionCreate(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*AWSClient).dxconn
+	defaultTagsConfig := meta.(*AWSClient).DefaultTagsConfig
+	tags := defaultTagsConfig.MergeTags(keyvaluetags.New(d.Get("tags").(map[string]interface{})))
 
 	req := &directconnect.CreateConnectionInput{
 		Bandwidth:      aws.String(d.Get("bandwidth").(string)),
 		ConnectionName: aws.String(d.Get("name").(string)),
 		Location:       aws.String(d.Get("location").(string)),
+	}
+
+	if len(tags) > 0 {
+		req.Tags = tags.IgnoreAws().DirectconnectTags()
 	}
 
 	log.Printf("[DEBUG] Creating Direct Connect connection: %#v", req)
@@ -64,11 +86,14 @@ func resourceAwsDxConnectionCreate(d *schema.ResourceData, meta interface{}) err
 	}
 
 	d.SetId(aws.StringValue(resp.ConnectionId))
-	return resourceAwsDxConnectionUpdate(d, meta)
+
+	return resourceAwsDxConnectionRead(d, meta)
 }
 
 func resourceAwsDxConnectionRead(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*AWSClient).dxconn
+	defaultTagsConfig := meta.(*AWSClient).DefaultTagsConfig
+	ignoreTagsConfig := meta.(*AWSClient).IgnoreTagsConfig
 
 	resp, err := conn.DescribeConnections(&directconnect.DescribeConnectionsInput{
 		ConnectionId: aws.String(d.Id()),
@@ -88,11 +113,11 @@ func resourceAwsDxConnectionRead(d *schema.ResourceData, meta interface{}) error
 		return nil
 	}
 	if len(resp.Connections) != 1 {
-		return fmt.Errorf("[ERROR] Number of Direct Connect connections (%s) isn't one, got %d", d.Id(), len(resp.Connections))
+		return fmt.Errorf("Number of Direct Connect connections (%s) isn't one, got %d", d.Id(), len(resp.Connections))
 	}
 	connection := resp.Connections[0]
 	if d.Id() != aws.StringValue(connection.ConnectionId) {
-		return fmt.Errorf("[ERROR] Direct Connect connection (%s) not found", d.Id())
+		return fmt.Errorf("Direct Connect connection (%s) not found", d.Id())
 	}
 	if aws.StringValue(connection.ConnectionState) == directconnect.ConnectionStateDeleted {
 		log.Printf("[WARN] Direct Connect connection (%s) not found, removing from state", d.Id())
@@ -111,9 +136,25 @@ func resourceAwsDxConnectionRead(d *schema.ResourceData, meta interface{}) error
 	d.Set("name", connection.ConnectionName)
 	d.Set("bandwidth", connection.Bandwidth)
 	d.Set("location", connection.Location)
+	d.Set("jumbo_frame_capable", connection.JumboFrameCapable)
+	d.Set("has_logical_redundancy", connection.HasLogicalRedundancy)
+	d.Set("aws_device", connection.AwsDeviceV2)
 
-	if err := getTagsDX(conn, d, arn); err != nil {
-		return err
+	tags, err := keyvaluetags.DirectconnectListTags(conn, arn)
+
+	if err != nil {
+		return fmt.Errorf("error listing tags for Direct Connect connection (%s): %s", arn, err)
+	}
+
+	tags = tags.IgnoreAws().IgnoreConfig(ignoreTagsConfig)
+
+	//lintignore:AWSR002
+	if err := d.Set("tags", tags.RemoveDefaultConfig(defaultTagsConfig).Map()); err != nil {
+		return fmt.Errorf("error setting tags: %w", err)
+	}
+
+	if err := d.Set("tags_all", tags.Map()); err != nil {
+		return fmt.Errorf("error setting tags_all: %w", err)
 	}
 
 	return nil
@@ -122,15 +163,13 @@ func resourceAwsDxConnectionRead(d *schema.ResourceData, meta interface{}) error
 func resourceAwsDxConnectionUpdate(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*AWSClient).dxconn
 
-	arn := arn.ARN{
-		Partition: meta.(*AWSClient).partition,
-		Region:    meta.(*AWSClient).region,
-		Service:   "directconnect",
-		AccountID: meta.(*AWSClient).accountid,
-		Resource:  fmt.Sprintf("dxcon/%s", d.Id()),
-	}.String()
-	if err := setTagsDX(conn, d, arn); err != nil {
-		return err
+	arn := d.Get("arn").(string)
+	if d.HasChange("tags_all") {
+		o, n := d.GetChange("tags_all")
+
+		if err := keyvaluetags.DirectconnectUpdateTags(conn, arn, o, n); err != nil {
+			return fmt.Errorf("error updating Direct Connect connection (%s) tags: %s", arn, err)
+		}
 	}
 
 	return resourceAwsDxConnectionRead(d, meta)

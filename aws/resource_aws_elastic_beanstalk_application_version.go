@@ -8,7 +8,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/elasticbeanstalk"
-	"github.com/hashicorp/terraform/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/terraform-providers/terraform-provider-aws/aws/internal/keyvaluetags"
 )
 
 func resourceAwsElasticBeanstalkApplicationVersion() *schema.Resource {
@@ -18,42 +19,52 @@ func resourceAwsElasticBeanstalkApplicationVersion() *schema.Resource {
 		Update: resourceAwsElasticBeanstalkApplicationVersionUpdate,
 		Delete: resourceAwsElasticBeanstalkApplicationVersionDelete,
 
+		CustomizeDiff: SetTagsDiff,
+
 		Schema: map[string]*schema.Schema{
-			"application": &schema.Schema{
+			"application": {
 				Type:     schema.TypeString,
 				Required: true,
 				ForceNew: true,
 			},
-			"description": &schema.Schema{
+			"arn": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
+			"description": {
 				Type:     schema.TypeString,
 				Optional: true,
 			},
-			"bucket": &schema.Schema{
+			"bucket": {
 				Type:     schema.TypeString,
 				Required: true,
 				ForceNew: true,
 			},
-			"key": &schema.Schema{
+			"key": {
 				Type:     schema.TypeString,
 				Required: true,
 				ForceNew: true,
 			},
-			"name": &schema.Schema{
+			"name": {
 				Type:     schema.TypeString,
 				Required: true,
 				ForceNew: true,
 			},
-			"force_delete": &schema.Schema{
+			"force_delete": {
 				Type:     schema.TypeBool,
 				Optional: true,
 				Default:  false,
 			},
+			"tags":     tagsSchema(),
+			"tags_all": tagsSchemaComputed(),
 		},
 	}
 }
 
 func resourceAwsElasticBeanstalkApplicationVersionCreate(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*AWSClient).elasticbeanstalkconn
+	defaultTagsConfig := meta.(*AWSClient).DefaultTagsConfig
+	tags := defaultTagsConfig.MergeTags(keyvaluetags.New(d.Get("tags").(map[string]interface{})))
 
 	application := d.Get("application").(string)
 	description := d.Get("description").(string)
@@ -70,6 +81,7 @@ func resourceAwsElasticBeanstalkApplicationVersionCreate(d *schema.ResourceData,
 		ApplicationName: aws.String(application),
 		Description:     aws.String(description),
 		SourceBundle:    &s3Location,
+		Tags:            tags.IgnoreElasticbeanstalk().ElasticbeanstalkTags(),
 		VersionLabel:    aws.String(name),
 	}
 
@@ -87,6 +99,8 @@ func resourceAwsElasticBeanstalkApplicationVersionCreate(d *schema.ResourceData,
 
 func resourceAwsElasticBeanstalkApplicationVersionRead(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*AWSClient).elasticbeanstalkconn
+	defaultTagsConfig := meta.(*AWSClient).DefaultTagsConfig
+	ignoreTagsConfig := meta.(*AWSClient).IgnoreTagsConfig
 
 	resp, err := conn.DescribeApplicationVersions(&elasticbeanstalk.DescribeApplicationVersionsInput{
 		ApplicationName: aws.String(d.Get("application").(string)),
@@ -107,8 +121,25 @@ func resourceAwsElasticBeanstalkApplicationVersionRead(d *schema.ResourceData, m
 			len(resp.ApplicationVersions), d.Id())
 	}
 
-	if err := d.Set("description", resp.ApplicationVersions[0].Description); err != nil {
-		return err
+	arn := aws.StringValue(resp.ApplicationVersions[0].ApplicationVersionArn)
+	d.Set("arn", arn)
+	d.Set("description", resp.ApplicationVersions[0].Description)
+
+	tags, err := keyvaluetags.ElasticbeanstalkListTags(conn, arn)
+
+	if err != nil {
+		return fmt.Errorf("error listing tags for Elastic Beanstalk Application version (%s): %w", arn, err)
+	}
+
+	tags = tags.IgnoreElasticbeanstalk().IgnoreConfig(ignoreTagsConfig)
+
+	//lintignore:AWSR002
+	if err := d.Set("tags", tags.RemoveDefaultConfig(defaultTagsConfig).Map()); err != nil {
+		return fmt.Errorf("error setting tags: %w", err)
+	}
+
+	if err := d.Set("tags_all", tags.Map()); err != nil {
+		return fmt.Errorf("error setting tags_all: %w", err)
 	}
 
 	return nil
@@ -123,6 +154,15 @@ func resourceAwsElasticBeanstalkApplicationVersionUpdate(d *schema.ResourceData,
 		}
 	}
 
+	arn := d.Get("arn").(string)
+	if d.HasChange("tags_all") {
+		o, n := d.GetChange("tags_all")
+
+		if err := keyvaluetags.ElasticbeanstalkUpdateTags(conn, arn, o, n); err != nil {
+			return fmt.Errorf("error updating Elastic Beanstalk Application version (%s) tags: %s", arn, err)
+		}
+	}
+
 	return resourceAwsElasticBeanstalkApplicationVersionRead(d, meta)
 
 }
@@ -133,7 +173,7 @@ func resourceAwsElasticBeanstalkApplicationVersionDelete(d *schema.ResourceData,
 	application := d.Get("application").(string)
 	name := d.Id()
 
-	if d.Get("force_delete").(bool) == false {
+	if !d.Get("force_delete").(bool) {
 		environments, err := versionUsedBy(application, name, conn)
 		if err != nil {
 			return err
@@ -153,14 +193,12 @@ func resourceAwsElasticBeanstalkApplicationVersionDelete(d *schema.ResourceData,
 		if awserr, ok := err.(awserr.Error); ok {
 			// application version is pending delete, or no longer exists.
 			if awserr.Code() == "InvalidParameterValue" {
-				d.SetId("")
 				return nil
 			}
 		}
 		return err
 	}
 
-	d.SetId("")
 	return nil
 }
 

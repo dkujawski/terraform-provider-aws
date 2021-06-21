@@ -2,20 +2,19 @@ package aws
 
 import (
 	"bytes"
-	"crypto/sha1"
-	"encoding/hex"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/autoscaling"
 	"github.com/aws/aws-sdk-go/service/ec2"
-	"github.com/hashicorp/terraform/helper/hashcode"
-	"github.com/hashicorp/terraform/helper/resource"
-	"github.com/hashicorp/terraform/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
+	"github.com/terraform-providers/terraform-provider-aws/aws/internal/hashcode"
+	"github.com/terraform-providers/terraform-provider-aws/aws/internal/naming"
+	iamwaiter "github.com/terraform-providers/terraform-provider-aws/aws/internal/service/iam/waiter"
 )
 
 func resourceAwsLaunchConfiguration() *schema.Resource {
@@ -28,37 +27,27 @@ func resourceAwsLaunchConfiguration() *schema.Resource {
 		},
 
 		Schema: map[string]*schema.Schema{
+			"arn": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
+
 			"name": {
 				Type:          schema.TypeString,
 				Optional:      true,
 				Computed:      true,
 				ForceNew:      true,
 				ConflictsWith: []string{"name_prefix"},
-				ValidateFunc: func(v interface{}, k string) (ws []string, errors []error) {
-					// https://github.com/boto/botocore/blob/9f322b1/botocore/data/autoscaling/2011-01-01/service-2.json#L1932-L1939
-					value := v.(string)
-					if len(value) > 255 {
-						errors = append(errors, fmt.Errorf(
-							"%q cannot be longer than 255 characters", k))
-					}
-					return
-				},
+				ValidateFunc:  validation.StringLenBetween(1, 255),
 			},
 
 			"name_prefix": {
-				Type:     schema.TypeString,
-				Optional: true,
-				ForceNew: true,
-				ValidateFunc: func(v interface{}, k string) (ws []string, errors []error) {
-					// https://github.com/boto/botocore/blob/9f322b1/botocore/data/autoscaling/2011-01-01/service-2.json#L1932-L1939
-					// uuid is 26 characters, limit the prefix to 229.
-					value := v.(string)
-					if len(value) > 229 {
-						errors = append(errors, fmt.Errorf(
-							"%q cannot be longer than 229 characters, name is limited to 255", k))
-					}
-					return
-				},
+				Type:          schema.TypeString,
+				Optional:      true,
+				Computed:      true,
+				ForceNew:      true,
+				ConflictsWith: []string{"name"},
+				ValidateFunc:  validation.StringLenBetween(1, 255-resource.UniqueIDSuffixLength),
 			},
 
 			"image_id": {
@@ -87,17 +76,34 @@ func resourceAwsLaunchConfiguration() *schema.Resource {
 			},
 
 			"user_data": {
-				Type:     schema.TypeString,
-				Optional: true,
-				ForceNew: true,
+				Type:          schema.TypeString,
+				Optional:      true,
+				ForceNew:      true,
+				ConflictsWith: []string{"user_data_base64"},
 				StateFunc: func(v interface{}) string {
-					switch v.(type) {
+					switch v := v.(type) {
 					case string:
-						hash := sha1.Sum([]byte(v.(string)))
-						return hex.EncodeToString(hash[:])
+						return userDataHashSum(v)
 					default:
 						return ""
 					}
+				},
+				ValidateFunc: validation.StringLenBetween(1, 16384),
+			},
+
+			"user_data_base64": {
+				Type:          schema.TypeString,
+				Optional:      true,
+				ForceNew:      true,
+				ConflictsWith: []string{"user_data"},
+				ValidateFunc: func(v interface{}, name string) (warns []string, errs []error) {
+					s := v.(string)
+					if !isBase64Encoded([]byte(s)) {
+						errs = append(errs, fmt.Errorf(
+							"%s: must be base64-encoded", name,
+						))
+					}
+					return
 				},
 			},
 
@@ -175,6 +181,13 @@ func resourceAwsLaunchConfiguration() *schema.Resource {
 							ForceNew: true,
 						},
 
+						"encrypted": {
+							Type:     schema.TypeBool,
+							Optional: true,
+							Computed: true,
+							ForceNew: true,
+						},
+
 						"iops": {
 							Type:     schema.TypeInt,
 							Optional: true,
@@ -182,8 +195,21 @@ func resourceAwsLaunchConfiguration() *schema.Resource {
 							ForceNew: true,
 						},
 
+						"no_device": {
+							Type:     schema.TypeBool,
+							Optional: true,
+							ForceNew: true,
+						},
+
 						"snapshot_id": {
 							Type:     schema.TypeString,
+							Optional: true,
+							Computed: true,
+							ForceNew: true,
+						},
+
+						"throughput": {
+							Type:     schema.TypeInt,
 							Optional: true,
 							Computed: true,
 							ForceNew: true,
@@ -198,13 +224,6 @@ func resourceAwsLaunchConfiguration() *schema.Resource {
 
 						"volume_type": {
 							Type:     schema.TypeString,
-							Optional: true,
-							Computed: true,
-							ForceNew: true,
-						},
-
-						"encrypted": {
-							Type:     schema.TypeBool,
 							Optional: true,
 							Computed: true,
 							ForceNew: true,
@@ -239,6 +258,39 @@ func resourceAwsLaunchConfiguration() *schema.Resource {
 				},
 			},
 
+			"metadata_options": {
+				Type:     schema.TypeList,
+				Optional: true,
+				Computed: true,
+				ForceNew: true,
+				MaxItems: 1,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"http_endpoint": {
+							Type:         schema.TypeString,
+							Optional:     true,
+							Computed:     true,
+							ForceNew:     true,
+							ValidateFunc: validation.StringInSlice([]string{autoscaling.InstanceMetadataEndpointStateEnabled, autoscaling.InstanceMetadataEndpointStateDisabled}, false),
+						},
+						"http_tokens": {
+							Type:         schema.TypeString,
+							Optional:     true,
+							Computed:     true,
+							ForceNew:     true,
+							ValidateFunc: validation.StringInSlice([]string{autoscaling.InstanceMetadataHttpTokensStateOptional, autoscaling.InstanceMetadataHttpTokensStateRequired}, false),
+						},
+						"http_put_response_hop_limit": {
+							Type:         schema.TypeInt,
+							Optional:     true,
+							Computed:     true,
+							ForceNew:     true,
+							ValidateFunc: validation.IntBetween(1, 64),
+						},
+					},
+				},
+			},
+
 			"root_block_device": {
 				Type:     schema.TypeList,
 				Optional: true,
@@ -256,7 +308,21 @@ func resourceAwsLaunchConfiguration() *schema.Resource {
 							ForceNew: true,
 						},
 
+						"encrypted": {
+							Type:     schema.TypeBool,
+							Optional: true,
+							Computed: true,
+							ForceNew: true,
+						},
+
 						"iops": {
+							Type:     schema.TypeInt,
+							Optional: true,
+							Computed: true,
+							ForceNew: true,
+						},
+
+						"throughput": {
 							Type:     schema.TypeInt,
 							Optional: true,
 							Computed: true,
@@ -287,8 +353,10 @@ func resourceAwsLaunchConfigurationCreate(d *schema.ResourceData, meta interface
 	autoscalingconn := meta.(*AWSClient).autoscalingconn
 	ec2conn := meta.(*AWSClient).ec2conn
 
+	lcName := naming.Generate(d.Get("name").(string), d.Get("name_prefix").(string))
+
 	createLaunchConfigurationOpts := autoscaling.CreateLaunchConfigurationInput{
-		LaunchConfigurationName: aws.String(d.Get("name").(string)),
+		LaunchConfigurationName: aws.String(lcName),
 		ImageId:                 aws.String(d.Get("image_id").(string)),
 		InstanceType:            aws.String(d.Get("instance_type").(string)),
 		EbsOptimized:            aws.Bool(d.Get("ebs_optimized").(bool)),
@@ -297,6 +365,8 @@ func resourceAwsLaunchConfigurationCreate(d *schema.ResourceData, meta interface
 	if v, ok := d.GetOk("user_data"); ok {
 		userData := base64Encode([]byte(v.(string)))
 		createLaunchConfigurationOpts.UserData = aws.String(userData)
+	} else if v, ok := d.GetOk("user_data_base64"); ok {
+		createLaunchConfigurationOpts.UserData = aws.String(v.(string))
 	}
 
 	createLaunchConfigurationOpts.InstanceMonitoring = &autoscaling.InstanceMonitoring{
@@ -323,19 +393,19 @@ func resourceAwsLaunchConfigurationCreate(d *schema.ResourceData, meta interface
 	}
 
 	if v, ok := d.GetOk("security_groups"); ok {
-		createLaunchConfigurationOpts.SecurityGroups = expandStringList(
-			v.(*schema.Set).List(),
-		)
+		createLaunchConfigurationOpts.SecurityGroups = expandStringSet(v.(*schema.Set))
 	}
 
 	if v, ok := d.GetOk("vpc_classic_link_id"); ok {
 		createLaunchConfigurationOpts.ClassicLinkVPCId = aws.String(v.(string))
 	}
 
+	if v, ok := d.GetOk("metadata_options"); ok {
+		createLaunchConfigurationOpts.MetadataOptions = expandLaunchConfigInstanceMetadataOptions(v.([]interface{}))
+	}
+
 	if v, ok := d.GetOk("vpc_classic_link_security_groups"); ok {
-		createLaunchConfigurationOpts.ClassicLinkVPCSecurityGroups = expandStringList(
-			v.(*schema.Set).List(),
-		)
+		createLaunchConfigurationOpts.ClassicLinkVPCSecurityGroups = expandStringSet(v.(*schema.Set))
 	}
 
 	var blockDevices []*autoscaling.BlockDeviceMapping
@@ -355,8 +425,13 @@ func resourceAwsLaunchConfigurationCreate(d *schema.ResourceData, meta interface
 		vL := v.(*schema.Set).List()
 		for _, v := range vL {
 			bd := v.(map[string]interface{})
-			ebs := &autoscaling.Ebs{
-				DeleteOnTermination: aws.Bool(bd["delete_on_termination"].(bool)),
+			ebs := &autoscaling.Ebs{}
+
+			var noDevice *bool
+			if v, ok := bd["no_device"].(bool); ok && v {
+				noDevice = aws.Bool(v)
+			} else {
+				ebs.DeleteOnTermination = aws.Bool(bd["delete_on_termination"].(bool))
 			}
 
 			if v, ok := bd["snapshot_id"].(string); ok && v != "" {
@@ -379,13 +454,18 @@ func resourceAwsLaunchConfigurationCreate(d *schema.ResourceData, meta interface
 				ebs.Iops = aws.Int64(int64(v))
 			}
 
-			if *aws.String(bd["device_name"].(string)) == *rootDeviceName {
+			if v, ok := bd["throughput"].(int); ok && v > 0 {
+				ebs.Throughput = aws.Int64(int64(v))
+			}
+
+			if bd["device_name"].(string) == aws.StringValue(rootDeviceName) {
 				return fmt.Errorf("Root device (%s) declared as an 'ebs_block_device'.  Use 'root_block_device' keyword.", *rootDeviceName)
 			}
 
 			blockDevices = append(blockDevices, &autoscaling.BlockDeviceMapping{
 				DeviceName: aws.String(bd["device_name"].(string)),
 				Ebs:        ebs,
+				NoDevice:   noDevice,
 			})
 		}
 	}
@@ -409,6 +489,10 @@ func resourceAwsLaunchConfigurationCreate(d *schema.ResourceData, meta interface
 				DeleteOnTermination: aws.Bool(bd["delete_on_termination"].(bool)),
 			}
 
+			if v, ok := bd["encrypted"].(bool); ok && v {
+				ebs.Encrypted = aws.Bool(v)
+			}
+
 			if v, ok := bd["volume_size"].(int); ok && v != 0 {
 				ebs.VolumeSize = aws.Int64(int64(v))
 			}
@@ -419,6 +503,10 @@ func resourceAwsLaunchConfigurationCreate(d *schema.ResourceData, meta interface
 
 			if v, ok := bd["iops"].(int); ok && v > 0 {
 				ebs.Iops = aws.Int64(int64(v))
+			}
+
+			if v, ok := bd["throughput"].(int); ok && v > 0 {
+				ebs.Throughput = aws.Int64(int64(v))
 			}
 
 			if dn, err := fetchRootDeviceName(d.Get("image_id").(string), ec2conn); err == nil {
@@ -441,53 +529,33 @@ func resourceAwsLaunchConfigurationCreate(d *schema.ResourceData, meta interface
 		createLaunchConfigurationOpts.BlockDeviceMappings = blockDevices
 	}
 
-	var lcName string
-	if v, ok := d.GetOk("name"); ok {
-		lcName = v.(string)
-	} else if v, ok := d.GetOk("name_prefix"); ok {
-		lcName = resource.PrefixedUniqueId(v.(string))
-	} else {
-		lcName = resource.UniqueId()
-	}
-	createLaunchConfigurationOpts.LaunchConfigurationName = aws.String(lcName)
-
-	log.Printf(
-		"[DEBUG] autoscaling create launch configuration: %s", createLaunchConfigurationOpts)
+	log.Printf("[DEBUG] autoscaling create launch configuration: %s", createLaunchConfigurationOpts)
 
 	// IAM profiles can take ~10 seconds to propagate in AWS:
 	// http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html#launch-instance-with-role-console
-	err = resource.Retry(90*time.Second, func() *resource.RetryError {
+	err = resource.Retry(iamwaiter.PropagationTimeout, func() *resource.RetryError {
 		_, err := autoscalingconn.CreateLaunchConfiguration(&createLaunchConfigurationOpts)
 		if err != nil {
-			if awsErr, ok := err.(awserr.Error); ok {
-				if strings.Contains(awsErr.Message(), "Invalid IamInstanceProfile") {
-					return resource.RetryableError(err)
-				}
-				if strings.Contains(awsErr.Message(), "You are not authorized to perform this operation") {
-					return resource.RetryableError(err)
-				}
+			if isAWSErr(err, "ValidationError", "Invalid IamInstanceProfile") {
+				return resource.RetryableError(err)
+			}
+			if isAWSErr(err, "ValidationError", "You are not authorized to perform this operation") {
+				return resource.RetryableError(err)
 			}
 			return resource.NonRetryableError(err)
 		}
 		return nil
 	})
-
+	if isResourceTimeoutError(err) {
+		_, err = autoscalingconn.CreateLaunchConfiguration(&createLaunchConfigurationOpts)
+	}
 	if err != nil {
 		return fmt.Errorf("Error creating launch configuration: %s", err)
 	}
 
 	d.SetId(lcName)
-	log.Printf("[INFO] launch configuration ID: %s", d.Id())
 
-	// We put a Retry here since sometimes eventual consistency bites
-	// us and we need to retry a few times to get the LC to load properly
-	return resource.Retry(30*time.Second, func() *resource.RetryError {
-		err := resourceAwsLaunchConfigurationRead(d, meta)
-		if err != nil {
-			return resource.RetryableError(err)
-		}
-		return nil
-	})
+	return resourceAwsLaunchConfigurationRead(d, meta)
 }
 
 func resourceAwsLaunchConfigurationRead(d *schema.ResourceData, meta interface{}) error {
@@ -504,6 +572,7 @@ func resourceAwsLaunchConfigurationRead(d *schema.ResourceData, meta interface{}
 		return fmt.Errorf("Error retrieving launch configuration: %s", err)
 	}
 	if len(describConfs.LaunchConfigurations) == 0 {
+		log.Printf("[WARN] Launch Configuration (%s) not found, removing from state", d.Id())
 		d.SetId("")
 		return nil
 	}
@@ -516,21 +585,40 @@ func resourceAwsLaunchConfigurationRead(d *schema.ResourceData, meta interface{}
 	}
 
 	lc := describConfs.LaunchConfigurations[0]
+	log.Printf("[DEBUG] launch configuration output: %s", lc)
 
 	d.Set("key_name", lc.KeyName)
 	d.Set("image_id", lc.ImageId)
 	d.Set("instance_type", lc.InstanceType)
 	d.Set("name", lc.LaunchConfigurationName)
+	d.Set("name_prefix", naming.NamePrefixFromName(aws.StringValue(lc.LaunchConfigurationName)))
+	d.Set("arn", lc.LaunchConfigurationARN)
 
 	d.Set("iam_instance_profile", lc.IamInstanceProfile)
 	d.Set("ebs_optimized", lc.EbsOptimized)
 	d.Set("spot_price", lc.SpotPrice)
 	d.Set("enable_monitoring", lc.InstanceMonitoring.Enabled)
-	d.Set("security_groups", lc.SecurityGroups)
 	d.Set("associate_public_ip_address", lc.AssociatePublicIpAddress)
+	if err := d.Set("security_groups", flattenStringList(lc.SecurityGroups)); err != nil {
+		return fmt.Errorf("error setting security_groups: %s", err)
+	}
+	if v := aws.StringValue(lc.UserData); v != "" {
+		_, b64 := d.GetOk("user_data_base64")
+		if b64 {
+			d.Set("user_data_base64", v)
+		} else {
+			d.Set("user_data", userDataHashSum(v))
+		}
+	}
 
 	d.Set("vpc_classic_link_id", lc.ClassicLinkVPCId)
-	d.Set("vpc_classic_link_security_groups", lc.ClassicLinkVPCSecurityGroups)
+	if err := d.Set("vpc_classic_link_security_groups", flattenStringList(lc.ClassicLinkVPCSecurityGroups)); err != nil {
+		return fmt.Errorf("error setting vpc_classic_link_security_groups: %s", err)
+	}
+
+	if err := d.Set("metadata_options", flattenLaunchConfigInstanceMetadataOptions(lc.MetadataOptions)); err != nil {
+		return fmt.Errorf("error setting metadata_options: %s", err)
+	}
 
 	if err := readLCBlockDevices(d, lc, ec2conn); err != nil {
 		return err
@@ -541,20 +629,36 @@ func resourceAwsLaunchConfigurationRead(d *schema.ResourceData, meta interface{}
 
 func resourceAwsLaunchConfigurationDelete(d *schema.ResourceData, meta interface{}) error {
 	autoscalingconn := meta.(*AWSClient).autoscalingconn
+	input := &autoscaling.DeleteLaunchConfigurationInput{
+		LaunchConfigurationName: aws.String(d.Id()),
+	}
 
-	log.Printf("[DEBUG] Launch Configuration destroy: %v", d.Id())
-	_, err := autoscalingconn.DeleteLaunchConfiguration(
-		&autoscaling.DeleteLaunchConfigurationInput{
-			LaunchConfigurationName: aws.String(d.Id()),
-		})
-	if err != nil {
-		autoscalingerr, ok := err.(awserr.Error)
-		if ok && (autoscalingerr.Code() == "InvalidConfiguration.NotFound" || autoscalingerr.Code() == "ValidationError") {
-			log.Printf("[DEBUG] Launch configuration (%s) not found", d.Id())
+	log.Printf("[DEBUG] Deleting Autoscaling Launch Configuration: %s", d.Id())
+	// Retry for Autoscaling eventual consistency
+	err := resource.Retry(1*time.Minute, func() *resource.RetryError {
+		_, err := autoscalingconn.DeleteLaunchConfiguration(input)
+
+		if isAWSErr(err, autoscaling.ErrCodeResourceInUseFault, "") {
+			return resource.RetryableError(err)
+		}
+
+		if isAWSErr(err, "InvalidConfiguration.NotFound", "") {
 			return nil
 		}
 
-		return err
+		if err != nil {
+			return resource.NonRetryableError(err)
+		}
+
+		return nil
+	})
+
+	if isResourceTimeoutError(err) {
+		_, err = autoscalingconn.DeleteLaunchConfiguration(input)
+	}
+
+	if err != nil {
+		return fmt.Errorf("error deleting Autoscaling Launch Configuration (%s): %s", d.Id(), err)
 	}
 
 	return nil
@@ -583,6 +687,46 @@ func readLCBlockDevices(d *schema.ResourceData, lc *autoscaling.LaunchConfigurat
 	return nil
 }
 
+func expandLaunchConfigInstanceMetadataOptions(l []interface{}) *autoscaling.InstanceMetadataOptions {
+	if len(l) == 0 || l[0] == nil {
+		return nil
+	}
+
+	m := l[0].(map[string]interface{})
+
+	opts := &autoscaling.InstanceMetadataOptions{
+		HttpEndpoint: aws.String(m["http_endpoint"].(string)),
+	}
+
+	if m["http_endpoint"].(string) == autoscaling.InstanceMetadataEndpointStateEnabled {
+		// These parameters are not allowed unless HttpEndpoint is enabled
+
+		if v, ok := m["http_tokens"].(string); ok && v != "" {
+			opts.HttpTokens = aws.String(v)
+		}
+
+		if v, ok := m["http_put_response_hop_limit"].(int); ok && v != 0 {
+			opts.HttpPutResponseHopLimit = aws.Int64(int64(v))
+		}
+	}
+
+	return opts
+}
+
+func flattenLaunchConfigInstanceMetadataOptions(opts *autoscaling.InstanceMetadataOptions) []interface{} {
+	if opts == nil {
+		return nil
+	}
+
+	m := map[string]interface{}{
+		"http_endpoint":               aws.StringValue(opts.HttpEndpoint),
+		"http_put_response_hop_limit": aws.Int64Value(opts.HttpPutResponseHopLimit),
+		"http_tokens":                 aws.StringValue(opts.HttpTokens),
+	}
+
+	return []interface{}{m}
+}
+
 func readBlockDevicesFromLaunchConfiguration(d *schema.ResourceData, lc *autoscaling.LaunchConfiguration, ec2conn *ec2.EC2) (
 	map[string]interface{}, error) {
 	blockDevices := make(map[string]interface{})
@@ -601,11 +745,33 @@ func readBlockDevicesFromLaunchConfiguration(d *schema.ResourceData, lc *autosca
 		var blank string
 		rootDeviceName = &blank
 	}
+
+	// Collect existing configured devices, so we can check
+	// existing value of delete_on_termination below
+	existingEbsBlockDevices := make(map[string]map[string]interface{})
+	if v, ok := d.GetOk("ebs_block_device"); ok {
+		ebsBlocks := v.(*schema.Set)
+		for _, ebd := range ebsBlocks.List() {
+			m := ebd.(map[string]interface{})
+			deviceName := m["device_name"].(string)
+			existingEbsBlockDevices[deviceName] = m
+		}
+	}
+
 	for _, bdm := range lc.BlockDeviceMappings {
 		bd := make(map[string]interface{})
-		if bdm.Ebs != nil && bdm.Ebs.DeleteOnTermination != nil {
+
+		if bdm.NoDevice != nil {
+			// Keep existing value in place to avoid spurious diff
+			deleteOnTermination := true
+			if device, ok := existingEbsBlockDevices[*bdm.DeviceName]; ok {
+				deleteOnTermination = device["delete_on_termination"].(bool)
+			}
+			bd["delete_on_termination"] = deleteOnTermination
+		} else if bdm.Ebs != nil && bdm.Ebs.DeleteOnTermination != nil {
 			bd["delete_on_termination"] = *bdm.Ebs.DeleteOnTermination
 		}
+
 		if bdm.Ebs != nil && bdm.Ebs.VolumeSize != nil {
 			bd["volume_size"] = *bdm.Ebs.VolumeSize
 		}
@@ -615,22 +781,29 @@ func readBlockDevicesFromLaunchConfiguration(d *schema.ResourceData, lc *autosca
 		if bdm.Ebs != nil && bdm.Ebs.Iops != nil {
 			bd["iops"] = *bdm.Ebs.Iops
 		}
+		if bdm.Ebs != nil && bdm.Ebs.Throughput != nil {
+			bd["throughput"] = *bdm.Ebs.Throughput
+		}
+		if bdm.Ebs != nil && bdm.Ebs.Encrypted != nil {
+			bd["encrypted"] = *bdm.Ebs.Encrypted
+		}
 
 		if bdm.DeviceName != nil && *bdm.DeviceName == *rootDeviceName {
 			blockDevices["root"] = bd
 		} else {
-			if bdm.Ebs != nil && bdm.Ebs.Encrypted != nil {
-				bd["encrypted"] = *bdm.Ebs.Encrypted
-			}
 			if bdm.DeviceName != nil {
 				bd["device_name"] = *bdm.DeviceName
 			}
+
 			if bdm.VirtualName != nil {
 				bd["virtual_name"] = *bdm.VirtualName
 				blockDevices["ephemeral"] = append(blockDevices["ephemeral"].([]map[string]interface{}), bd)
 			} else {
 				if bdm.Ebs != nil && bdm.Ebs.SnapshotId != nil {
 					bd["snapshot_id"] = *bdm.Ebs.SnapshotId
+				}
+				if bdm.NoDevice != nil {
+					bd["no_device"] = *bdm.NoDevice
 				}
 				blockDevices["ebs"] = append(blockDevices["ebs"].([]map[string]interface{}), bd)
 			}

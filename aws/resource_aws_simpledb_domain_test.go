@@ -7,21 +7,29 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/simpledb"
-	"github.com/hashicorp/terraform/helper/resource"
-	"github.com/hashicorp/terraform/terraform"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 )
 
 func TestAccAWSSimpleDBDomain_basic(t *testing.T) {
-	resource.Test(t, resource.TestCase{
-		PreCheck:     func() { testAccPreCheck(t) },
+	resourceName := "aws_simpledb_domain.test_domain"
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t); testAccPartitionHasServicePreCheck(simpledb.EndpointsID, t) },
+		ErrorCheck:   testAccErrorCheck(t, simpledb.EndpointsID),
 		Providers:    testAccProviders,
 		CheckDestroy: testAccCheckAWSSimpleDBDomainDestroy,
 		Steps: []resource.TestStep{
-			resource.TestStep{
+			{
 				Config: testAccAWSSimpleDBDomainConfig,
 				Check: resource.ComposeTestCheckFunc(
-					testAccCheckAWSSimpleDBDomainExists("aws_simpledb_domain.test_domain"),
+					testAccCheckAWSSimpleDBDomainExists(resourceName),
 				),
+			},
+			{
+				ResourceName:      resourceName,
+				ImportState:       true,
+				ImportStateVerify: true,
 			},
 		},
 	})

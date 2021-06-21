@@ -1,17 +1,24 @@
 ---
+subcategory: "RDS"
 layout: "aws"
 page_title: "AWS: aws_db_option_group"
-sidebar_current: "docs-aws-resource-db-option-group"
+description: |-
+  Provides an RDS DB option group resource.
 ---
 
-# aws_db_option_group
+# Resource: aws_db_option_group
 
-Provides an RDS DB option group resource.
+Provides an RDS DB option group resource. Documentation of the available options for various RDS engines can be found at:
+
+* [MariaDB Options](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Appendix.MariaDB.Options.html)
+* [Microsoft SQL Server Options](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Appendix.SQLServer.Options.html)
+* [MySQL Options](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Appendix.MySQL.Options.html)
+* [Oracle Options](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Appendix.Oracle.Options.html)
 
 ## Example Usage
 
-```hcl
-resource "aws_db_option_group" "bar" {
+```terraform
+resource "aws_db_option_group" "example" {
   name                     = "option-group-test-terraform"
   option_group_description = "Terraform Option Group"
   engine_name              = "sqlserver-ee"
@@ -23,6 +30,15 @@ resource "aws_db_option_group" "bar" {
     option_settings {
       name  = "TIME_ZONE"
       value = "UTC"
+    }
+  }
+
+  option {
+    option_name = "SQLSERVER_BACKUP_RESTORE"
+
+    option_settings {
+      name  = "IAM_ROLE_ARN"
+      value = aws_iam_role.example.arn
     }
   }
 
@@ -44,13 +60,14 @@ The following arguments are supported:
 * `engine_name` - (Required) Specifies the name of the engine that this option group should be associated with.
 * `major_engine_version` - (Required) Specifies the major version of the engine that this option group should be associated with.
 * `option` - (Optional) A list of Options to apply.
-* `tags` - (Optional) A mapping of tags to assign to the resource.
+* `tags` - (Optional) A map of tags to assign to the resource. If configured with a provider [`default_tags` configuration block](/docs/providers/aws/index.html#default_tags-configuration-block) present, tags with matching keys will overwrite those defined at the provider-level.
 
 Option blocks support the following:
 
 * `option_name` - (Required) The Name of the Option (e.g. MEMCACHED).
 * `option_settings` - (Optional) A list of option settings to apply.
 * `port` - (Optional) The Port number when connecting to the Option (e.g. 11211).
+* `version` - (Optional) The version of the option (e.g. 13.1.0.0).
 * `db_security_group_memberships` - (Optional) A list of DB Security Groups for which the option is enabled.
 * `vpc_security_group_memberships` - (Optional) A list of VPC Security Groups for which the option is enabled.
 
@@ -61,16 +78,16 @@ Option Settings blocks support the following:
 
 ## Attributes Reference
 
-The following attributes are exported:
+In addition to all arguments above, the following attributes are exported:
 
 * `id` - The db option group name.
 * `arn` - The ARN of the db option group.
+* `tags_all` - A map of tags assigned to the resource, including those inherited from the provider [`default_tags` configuration block](/docs/providers/aws/index.html#default_tags-configuration-block).
 
-<a id="timeouts"></a>
 ## Timeouts
 
 `aws_db_option_group` provides the following
-[Timeouts](/docs/configuration/resources.html#timeouts) configuration options:
+[Timeouts](https://www.terraform.io/docs/configuration/blocks/resources/syntax.html#operation-timeouts) configuration options:
 
 - `delete` - (Default `15 minutes`)
 

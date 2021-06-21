@@ -6,30 +6,37 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/iam"
-	"github.com/hashicorp/terraform/helper/resource"
-	"github.com/hashicorp/terraform/terraform"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 )
 
 func TestAccAWSIAMAccountPasswordPolicy_basic(t *testing.T) {
 	var policy iam.GetAccountPasswordPolicyOutput
+	resourceName := "aws_iam_account_password_policy.test"
 
-	resource.Test(t, resource.TestCase{
+	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
+		ErrorCheck:   testAccErrorCheck(t, iam.EndpointsID),
 		Providers:    testAccProviders,
 		CheckDestroy: testAccCheckAWSIAMAccountPasswordPolicyDestroy,
 		Steps: []resource.TestStep{
-			resource.TestStep{
+			{
 				Config: testAccAWSIAMAccountPasswordPolicy,
 				Check: resource.ComposeTestCheckFunc(
-					testAccCheckAWSIAMAccountPasswordPolicyExists("aws_iam_account_password_policy.default", &policy),
-					resource.TestCheckResourceAttr("aws_iam_account_password_policy.default", "minimum_password_length", "8"),
+					testAccCheckAWSIAMAccountPasswordPolicyExists(resourceName, &policy),
+					resource.TestCheckResourceAttr(resourceName, "minimum_password_length", "8"),
 				),
 			},
-			resource.TestStep{
+			{
+				ResourceName:      resourceName,
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+			{
 				Config: testAccAWSIAMAccountPasswordPolicy_modified,
 				Check: resource.ComposeTestCheckFunc(
-					testAccCheckAWSIAMAccountPasswordPolicyExists("aws_iam_account_password_policy.default", &policy),
-					resource.TestCheckResourceAttr("aws_iam_account_password_policy.default", "minimum_password_length", "7"),
+					testAccCheckAWSIAMAccountPasswordPolicyExists(resourceName, &policy),
+					resource.TestCheckResourceAttr(resourceName, "minimum_password_length", "7"),
 				),
 			},
 		},
@@ -88,18 +95,19 @@ func testAccCheckAWSIAMAccountPasswordPolicyExists(n string, res *iam.GetAccount
 }
 
 const testAccAWSIAMAccountPasswordPolicy = `
-resource "aws_iam_account_password_policy" "default" {
-	allow_users_to_change_password = true
-	minimum_password_length = 8
-	require_numbers = true
+resource "aws_iam_account_password_policy" "test" {
+  allow_users_to_change_password = true
+  minimum_password_length        = 8
+  require_numbers                = true
 }
 `
+
 const testAccAWSIAMAccountPasswordPolicy_modified = `
-resource "aws_iam_account_password_policy" "default" {
-	allow_users_to_change_password = true
-	minimum_password_length = 7
-	require_numbers = false
-	require_symbols = true
-	require_uppercase_characters = true
+resource "aws_iam_account_password_policy" "test" {
+  allow_users_to_change_password = true
+  minimum_password_length        = 7
+  require_numbers                = false
+  require_symbols                = true
+  require_uppercase_characters   = true
 }
 `

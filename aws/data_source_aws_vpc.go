@@ -5,8 +5,11 @@ import (
 	"log"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/arn"
 	"github.com/aws/aws-sdk-go/service/ec2"
-	"github.com/hashicorp/terraform/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/terraform-providers/terraform-provider-aws/aws/internal/keyvaluetags"
+	"github.com/terraform-providers/terraform-provider-aws/aws/internal/service/ec2/finder"
 )
 
 func dataSourceAwsVpc() *schema.Resource {
@@ -14,8 +17,40 @@ func dataSourceAwsVpc() *schema.Resource {
 		Read: dataSourceAwsVpcRead,
 
 		Schema: map[string]*schema.Schema{
+			"arn": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
+
 			"cidr_block": {
 				Type:     schema.TypeString,
+				Optional: true,
+				Computed: true,
+			},
+
+			"cidr_block_associations": {
+				Type:     schema.TypeList,
+				Computed: true,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"association_id": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"cidr_block": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"state": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+					},
+				},
+			},
+
+			"default": {
+				Type:     schema.TypeBool,
 				Optional: true,
 				Computed: true,
 			},
@@ -26,9 +61,13 @@ func dataSourceAwsVpc() *schema.Resource {
 				Computed: true,
 			},
 
-			"default": {
+			"enable_dns_hostnames": {
 				Type:     schema.TypeBool,
-				Optional: true,
+				Computed: true,
+			},
+
+			"enable_dns_support": {
+				Type:     schema.TypeBool,
 				Computed: true,
 			},
 
@@ -55,29 +94,30 @@ func dataSourceAwsVpc() *schema.Resource {
 				Computed: true,
 			},
 
+			"main_route_table_id": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
+
 			"state": {
 				Type:     schema.TypeString,
 				Optional: true,
 				Computed: true,
 			},
 
-			"enable_dns_hostnames": {
-				Type:     schema.TypeBool,
-				Computed: true,
-			},
-
-			"enable_dns_support": {
-				Type:     schema.TypeBool,
-				Computed: true,
-			},
-
 			"tags": tagsSchemaComputed(),
+
+			"owner_id": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
 		},
 	}
 }
 
 func dataSourceAwsVpcRead(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*AWSClient).ec2conn
+	ignoreTagsConfig := meta.(*AWSClient).IgnoreTagsConfig
 
 	req := &ec2.DescribeVpcsInput{}
 
@@ -108,9 +148,13 @@ func dataSourceAwsVpcRead(d *schema.ResourceData, meta interface{}) error {
 			"state":           d.Get("state").(string),
 		},
 	)
-	req.Filters = append(req.Filters, buildEC2TagFilterList(
-		tagsFromMap(d.Get("tags").(map[string]interface{})),
-	)...)
+
+	if tags, tagsOk := d.GetOk("tags"); tagsOk {
+		req.Filters = append(req.Filters, buildEC2TagFilterList(
+			keyvaluetags.New(tags.(map[string]interface{})).Ec2Tags(),
+		)...)
+	}
+
 	req.Filters = append(req.Filters, buildEC2CustomFilterList(
 		d.Get("filter").(*schema.Set),
 	)...)
@@ -133,30 +177,67 @@ func dataSourceAwsVpcRead(d *schema.ResourceData, meta interface{}) error {
 
 	vpc := resp.Vpcs[0]
 
-	d.SetId(*vpc.VpcId)
+	d.SetId(aws.StringValue(vpc.VpcId))
 	d.Set("cidr_block", vpc.CidrBlock)
 	d.Set("dhcp_options_id", vpc.DhcpOptionsId)
 	d.Set("instance_tenancy", vpc.InstanceTenancy)
 	d.Set("default", vpc.IsDefault)
 	d.Set("state", vpc.State)
-	d.Set("tags", tagsToMap(vpc.Tags))
+
+	if err := d.Set("tags", keyvaluetags.Ec2KeyValueTags(vpc.Tags).IgnoreAws().IgnoreConfig(ignoreTagsConfig).Map()); err != nil {
+		return fmt.Errorf("error setting tags: %w", err)
+	}
+
+	d.Set("owner_id", vpc.OwnerId)
+
+	arn := arn.ARN{
+		Partition: meta.(*AWSClient).partition,
+		Service:   ec2.ServiceName,
+		Region:    meta.(*AWSClient).region,
+		AccountID: aws.StringValue(vpc.OwnerId),
+		Resource:  fmt.Sprintf("vpc/%s", d.Id()),
+	}.String()
+	d.Set("arn", arn)
+
+	cidrAssociations := []interface{}{}
+	for _, associationSet := range vpc.CidrBlockAssociationSet {
+		association := map[string]interface{}{
+			"association_id": aws.StringValue(associationSet.AssociationId),
+			"cidr_block":     aws.StringValue(associationSet.CidrBlock),
+			"state":          aws.StringValue(associationSet.CidrBlockState.State),
+		}
+		cidrAssociations = append(cidrAssociations, association)
+	}
+	if err := d.Set("cidr_block_associations", cidrAssociations); err != nil {
+		return fmt.Errorf("error setting cidr_block_associations: %w", err)
+	}
 
 	if vpc.Ipv6CidrBlockAssociationSet != nil {
 		d.Set("ipv6_association_id", vpc.Ipv6CidrBlockAssociationSet[0].AssociationId)
 		d.Set("ipv6_cidr_block", vpc.Ipv6CidrBlockAssociationSet[0].Ipv6CidrBlock)
 	}
 
-	attResp, err := awsVpcDescribeVpcAttribute("enableDnsSupport", *vpc.VpcId, conn)
-	if err != nil {
-		return err
-	}
-	d.Set("enable_dns_support", attResp.EnableDnsSupport.Value)
+	enableDnsHostnames, err := finder.VpcAttribute(conn, aws.StringValue(vpc.VpcId), ec2.VpcAttributeNameEnableDnsHostnames)
 
-	attResp, err = awsVpcDescribeVpcAttribute("enableDnsHostnames", *vpc.VpcId, conn)
 	if err != nil {
-		return err
+		return fmt.Errorf("error reading EC2 VPC (%s) Attribute (%s): %w", aws.StringValue(vpc.VpcId), ec2.VpcAttributeNameEnableDnsHostnames, err)
 	}
-	d.Set("enable_dns_hostnames", attResp.EnableDnsHostnames.Value)
+
+	d.Set("enable_dns_hostnames", enableDnsHostnames)
+
+	enableDnsSupport, err := finder.VpcAttribute(conn, aws.StringValue(vpc.VpcId), ec2.VpcAttributeNameEnableDnsSupport)
+
+	if err != nil {
+		return fmt.Errorf("error reading EC2 VPC (%s) Attribute (%s): %w", aws.StringValue(vpc.VpcId), ec2.VpcAttributeNameEnableDnsSupport, err)
+	}
+
+	d.Set("enable_dns_support", enableDnsSupport)
+
+	routeTableId, err := resourceAwsVpcSetMainRouteTable(conn, aws.StringValue(vpc.VpcId))
+	if err != nil {
+		log.Printf("[WARN] Unable to set Main Route Table: %s", err)
+	}
+	d.Set("main_route_table_id", routeTableId)
 
 	return nil
 }

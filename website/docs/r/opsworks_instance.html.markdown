@@ -1,23 +1,23 @@
 ---
+subcategory: "OpsWorks"
 layout: "aws"
 page_title: "AWS: aws_opsworks_instance"
-sidebar_current: "docs-aws-resource-opsworks-instance"
 description: |-
   Provides an OpsWorks instance resource.
 ---
 
-# aws_opsworks_instance
+# Resource: aws_opsworks_instance
 
 Provides an OpsWorks instance resource.
 
 ## Example Usage
 
-```hcl
+```terraform
 resource "aws_opsworks_instance" "my-instance" {
-  stack_id = "${aws_opsworks_stack.my-stack.id}"
+  stack_id = aws_opsworks_stack.main.id
 
   layer_ids = [
-    "${aws_opsworks_custom_layer.my-layer.id}",
+    aws_opsworks_custom_layer.my-layer.id,
   ]
 
   instance_type = "t2.micro"
@@ -110,16 +110,17 @@ identified by the `virtual_name` in the format `"ephemeral{0..N}"`.
 ~> **NOTE:** Currently, changes to `*_block_device` configuration of _existing_
 resources cannot be automatically detected by Terraform. After making updates
 to block device configuration, resource recreation can be manually triggered by
-using the [`taint` command](/docs/commands/taint.html).
+using the [`taint` command](https://www.terraform.io/docs/commands/taint.html).
 
 
 ## Attributes Reference
 
-The following attributes are exported:
+In addition to all arguments above, the following attributes are exported:
 
 * `id` - The id of the OpsWorks instance.
 * `agent_version` - The AWS OpsWorks agent version.
 * `availability_zone` - The availability zone of the instance.
+* `ec2_instance_id` - EC2 instance ID
 * `ssh_key_name` - The key name of the instance
 * `public_dns` - The public DNS name assigned to the instance. For EC2-VPC, this
   is only available if you've enabled DNS hostnames for your VPC
@@ -135,7 +136,7 @@ The following attributes are exported:
 ## Timeouts
 
 `aws_opsworks_instance` provides the following
-[Timeouts](/docs/configuration/resources.html#timeouts) configuration options:
+[Timeouts](https://www.terraform.io/docs/configuration/blocks/resources/syntax.html#operation-timeouts) configuration options:
 
 - `create` - (Default `10 minutes`) Used when the instance is created. It should cover the time needed for the instance to start successfully.
 - `delete` - (Default `10 minutes`) Used when the instance is deleted. It should cover the time needed for the instance to stop successfully.

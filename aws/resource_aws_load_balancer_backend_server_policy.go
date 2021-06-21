@@ -8,7 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/elb"
-	"github.com/hashicorp/terraform/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
 func resourceAwsLoadBalancerBackendServerPolicies() *schema.Resource {
@@ -19,19 +19,19 @@ func resourceAwsLoadBalancerBackendServerPolicies() *schema.Resource {
 		Delete: resourceAwsLoadBalancerBackendServerPoliciesDelete,
 
 		Schema: map[string]*schema.Schema{
-			"load_balancer_name": &schema.Schema{
+			"load_balancer_name": {
 				Type:     schema.TypeString,
 				Required: true,
 			},
 
-			"policy_names": &schema.Schema{
+			"policy_names": {
 				Type:     schema.TypeSet,
 				Elem:     &schema.Schema{Type: schema.TypeString},
 				Optional: true,
 				Set:      schema.HashString,
 			},
 
-			"instance_port": &schema.Schema{
+			"instance_port": {
 				Type:     schema.TypeInt,
 				Required: true,
 			},
@@ -46,7 +46,7 @@ func resourceAwsLoadBalancerBackendServerPoliciesCreate(d *schema.ResourceData, 
 
 	policyNames := []*string{}
 	if v, ok := d.GetOk("policy_names"); ok {
-		policyNames = expandStringList(v.(*schema.Set).List())
+		policyNames = expandStringSet(v.(*schema.Set))
 	}
 
 	setOpts := &elb.SetLoadBalancerPoliciesForBackendServerInput{
@@ -96,13 +96,15 @@ func resourceAwsLoadBalancerBackendServerPoliciesRead(d *schema.ResourceData, me
 			continue
 		}
 
-		for _, name := range backendServer.PolicyNames {
-			policyNames = append(policyNames, name)
-		}
+		policyNames = append(policyNames, backendServer.PolicyNames...)
 	}
 
 	d.Set("load_balancer_name", loadBalancerName)
-	d.Set("instance_port", instancePort)
+	instancePortVal, err := strconv.ParseInt(instancePort, 10, 64)
+	if err != nil {
+		return fmt.Errorf("error parsing instance port: %s", err)
+	}
+	d.Set("instance_port", instancePortVal)
 	d.Set("policy_names", flattenStringList(policyNames))
 
 	return nil
@@ -128,7 +130,6 @@ func resourceAwsLoadBalancerBackendServerPoliciesDelete(d *schema.ResourceData, 
 		return fmt.Errorf("Error setting LoadBalancerPoliciesForBackendServer: %s", err)
 	}
 
-	d.SetId("")
 	return nil
 }
 

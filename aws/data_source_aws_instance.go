@@ -1,12 +1,18 @@
 package aws
 
 import (
+	"bytes"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/arn"
 	"github.com/aws/aws-sdk-go/service/ec2"
-	"github.com/hashicorp/terraform/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/terraform-providers/terraform-provider-aws/aws/internal/hashcode"
+	"github.com/terraform-providers/terraform-provider-aws/aws/internal/keyvaluetags"
+	tfiam "github.com/terraform-providers/terraform-provider-aws/aws/internal/service/iam"
 )
 
 func dataSourceAwsInstance() *schema.Resource {
@@ -20,9 +26,12 @@ func dataSourceAwsInstance() *schema.Resource {
 			"instance_id": {
 				Type:     schema.TypeString,
 				Optional: true,
-				ForceNew: true,
 			},
 			"ami": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
+			"arn": {
 				Type:     schema.TypeString,
 				Computed: true,
 			},
@@ -46,7 +55,20 @@ func dataSourceAwsInstance() *schema.Resource {
 				Type:     schema.TypeString,
 				Computed: true,
 			},
+			"host_id": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
 			"key_name": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
+			"get_password_data": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  false,
+			},
+			"password_data": {
 				Type:     schema.TypeString,
 				Computed: true,
 			},
@@ -66,11 +88,20 @@ func dataSourceAwsInstance() *schema.Resource {
 				Type:     schema.TypeString,
 				Computed: true,
 			},
+			"secondary_private_ips": {
+				Type:     schema.TypeSet,
+				Computed: true,
+				Elem:     &schema.Schema{Type: schema.TypeString},
+			},
 			"iam_instance_profile": {
 				Type:     schema.TypeString,
 				Computed: true,
 			},
 			"subnet_id": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
+			"outpost_arn": {
 				Type:     schema.TypeString,
 				Computed: true,
 			},
@@ -94,7 +125,16 @@ func dataSourceAwsInstance() *schema.Resource {
 				Type:     schema.TypeBool,
 				Computed: true,
 			},
+			"get_user_data": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  false,
+			},
 			"user_data": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
+			"user_data_base64": {
 				Type:     schema.TypeString,
 				Computed: true,
 			},
@@ -113,7 +153,7 @@ func dataSourceAwsInstance() *schema.Resource {
 				},
 			},
 			"ephemeral_block_device": {
-				Type:     schema.TypeSet,
+				Type:     schema.TypeList,
 				Computed: true,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
@@ -159,8 +199,20 @@ func dataSourceAwsInstance() *schema.Resource {
 							Computed: true,
 						},
 
+						"kms_key_id": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+
 						"snapshot_id": {
 							Type:     schema.TypeString,
+							Computed: true,
+						},
+
+						"tags": tagsSchemaComputed(),
+
+						"throughput": {
+							Type:     schema.TypeInt,
 							Computed: true,
 						},
 
@@ -179,6 +231,14 @@ func dataSourceAwsInstance() *schema.Resource {
 							Computed: true,
 						},
 					},
+				},
+				// This should not be necessary, but currently is (see #7198)
+				Set: func(v interface{}) int {
+					var buf bytes.Buffer
+					m := v.(map[string]interface{})
+					buf.WriteString(fmt.Sprintf("%s-", m["device_name"].(string)))
+					buf.WriteString(fmt.Sprintf("%s-", m["snapshot_id"].(string)))
+					return hashcode.String(buf.String())
 				},
 			},
 			"root_block_device": {
@@ -191,7 +251,29 @@ func dataSourceAwsInstance() *schema.Resource {
 							Computed: true,
 						},
 
+						"device_name": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+
+						"encrypted": {
+							Type:     schema.TypeBool,
+							Computed: true,
+						},
+
 						"iops": {
+							Type:     schema.TypeInt,
+							Computed: true,
+						},
+
+						"kms_key_id": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+
+						"tags": tagsSchemaComputed(),
+
+						"throughput": {
 							Type:     schema.TypeInt,
 							Computed: true,
 						},
@@ -213,6 +295,54 @@ func dataSourceAwsInstance() *schema.Resource {
 					},
 				},
 			},
+			"credit_specification": {
+				Type:     schema.TypeList,
+				Computed: true,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"cpu_credits": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+					},
+				},
+			},
+			"metadata_options": {
+				Type:     schema.TypeList,
+				Computed: true,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"http_endpoint": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"http_tokens": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"http_put_response_hop_limit": {
+							Type:     schema.TypeInt,
+							Computed: true,
+						},
+					},
+				},
+			},
+			"disable_api_termination": {
+				Type:     schema.TypeBool,
+				Computed: true,
+			},
+			"enclave_options": {
+				Type:     schema.TypeList,
+				Computed: true,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"enabled": {
+							Type:     schema.TypeBool,
+							Computed: true,
+						},
+					},
+				},
+			},
 		},
 	}
 }
@@ -220,12 +350,13 @@ func dataSourceAwsInstance() *schema.Resource {
 // dataSourceAwsInstanceRead performs the instanceID lookup
 func dataSourceAwsInstanceRead(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*AWSClient).ec2conn
+	ignoreTagsConfig := meta.(*AWSClient).IgnoreTagsConfig
 
 	filters, filtersOk := d.GetOk("filter")
 	instanceID, instanceIDOk := d.GetOk("instance_id")
 	tags, tagsOk := d.GetOk("instance_tags")
 
-	if filtersOk == false && instanceIDOk == false && tagsOk == false {
+	if !filtersOk && !instanceIDOk && !tagsOk {
 		return fmt.Errorf("One of filters, instance_tags, or instance_id must be assigned")
 	}
 
@@ -238,9 +369,7 @@ func dataSourceAwsInstanceRead(d *schema.ResourceData, meta interface{}) error {
 		params.InstanceIds = []*string{aws.String(instanceID.(string))}
 	}
 	if tagsOk {
-		params.Filters = append(params.Filters, buildEC2TagFilterList(
-			tagsFromMap(tags.(map[string]interface{})),
-		)...)
+		params.Filters = append(params.Filters, ec2TagFiltersFromMap(tags.(map[string]interface{}))...)
 	}
 
 	log.Printf("[DEBUG] Reading IAM Instance: %s", params)
@@ -259,7 +388,7 @@ func dataSourceAwsInstanceRead(d *schema.ResourceData, meta interface{}) error {
 	// loop through reservations, and remove terminated instances, populate instance slice
 	for _, res := range resp.Reservations {
 		for _, instance := range res.Instances {
-			if instance.State != nil && *instance.State.Name != "terminated" {
+			if instance.State != nil && aws.StringValue(instance.State.Name) != ec2.InstanceStateNameTerminated {
 				filteredInstances = append(filteredInstances, instance)
 			}
 		}
@@ -279,13 +408,35 @@ func dataSourceAwsInstanceRead(d *schema.ResourceData, meta interface{}) error {
 		instance = filteredInstances[0]
 	}
 
-	log.Printf("[DEBUG] aws_instance - Single Instance ID found: %s", *instance.InstanceId)
-	return instanceDescriptionAttributes(d, instance, conn)
+	log.Printf("[DEBUG] aws_instance - Single Instance ID found: %s", aws.StringValue(instance.InstanceId))
+	if err := instanceDescriptionAttributes(d, instance, conn, ignoreTagsConfig); err != nil {
+		return err
+	}
+
+	if d.Get("get_password_data").(bool) {
+		passwordData, err := getAwsEc2InstancePasswordData(aws.StringValue(instance.InstanceId), conn)
+		if err != nil {
+			return err
+		}
+		d.Set("password_data", passwordData)
+	}
+
+	// ARN
+	arn := arn.ARN{
+		Partition: meta.(*AWSClient).partition,
+		Region:    meta.(*AWSClient).region,
+		Service:   ec2.ServiceName,
+		AccountID: meta.(*AWSClient).accountid,
+		Resource:  fmt.Sprintf("instance/%s", d.Id()),
+	}
+	d.Set("arn", arn.String())
+
+	return nil
 }
 
 // Populate instance attribute fields with the returned instance
-func instanceDescriptionAttributes(d *schema.ResourceData, instance *ec2.Instance, conn *ec2.EC2) error {
-	d.SetId(*instance.InstanceId)
+func instanceDescriptionAttributes(d *schema.ResourceData, instance *ec2.Instance, conn *ec2.EC2, ignoreTagsConfig *keyvaluetags.IgnoreConfig) error {
+	d.SetId(aws.StringValue(instance.InstanceId))
 	// Set the easy attributes
 	d.Set("instance_state", instance.State.Name)
 	if instance.Placement != nil {
@@ -297,6 +448,9 @@ func instanceDescriptionAttributes(d *schema.ResourceData, instance *ec2.Instanc
 	if instance.Placement.Tenancy != nil {
 		d.Set("tenancy", instance.Placement.Tenancy)
 	}
+	if instance.Placement.HostId != nil {
+		d.Set("host_id", instance.Placement.HostId)
+	}
 	d.Set("ami", instance.ImageId)
 	d.Set("instance_type", instance.InstanceType)
 	d.Set("key_name", instance.KeyName)
@@ -304,15 +458,37 @@ func instanceDescriptionAttributes(d *schema.ResourceData, instance *ec2.Instanc
 	d.Set("public_ip", instance.PublicIpAddress)
 	d.Set("private_dns", instance.PrivateDnsName)
 	d.Set("private_ip", instance.PrivateIpAddress)
-	d.Set("iam_instance_profile", iamInstanceProfileArnToName(instance.IamInstanceProfile))
+	d.Set("outpost_arn", instance.OutpostArn)
+
+	if instance.IamInstanceProfile != nil && instance.IamInstanceProfile.Arn != nil {
+		name, err := tfiam.InstanceProfileARNToName(aws.StringValue(instance.IamInstanceProfile.Arn))
+
+		if err != nil {
+			return fmt.Errorf("error setting iam_instance_profile: %w", err)
+		}
+
+		d.Set("iam_instance_profile", name)
+	} else {
+		d.Set("iam_instance_profile", nil)
+	}
 
 	// iterate through network interfaces, and set subnet, network_interface, public_addr
 	if len(instance.NetworkInterfaces) > 0 {
 		for _, ni := range instance.NetworkInterfaces {
-			if *ni.Attachment.DeviceIndex == 0 {
+			if aws.Int64Value(ni.Attachment.DeviceIndex) == 0 {
 				d.Set("subnet_id", ni.SubnetId)
 				d.Set("network_interface_id", ni.NetworkInterfaceId)
 				d.Set("associate_public_ip_address", ni.Association != nil)
+
+				secondaryIPs := make([]string, 0, len(ni.PrivateIpAddresses))
+				for _, ip := range ni.PrivateIpAddresses {
+					if !aws.BoolValue(ip.Primary) {
+						secondaryIPs = append(secondaryIPs, aws.StringValue(ip.PrivateIpAddress))
+					}
+				}
+				if err := d.Set("secondary_private_ips", secondaryIPs); err != nil {
+					return fmt.Errorf("error setting secondary_private_ips: %w", err)
+				}
 			}
 		}
 	} else {
@@ -321,16 +497,18 @@ func instanceDescriptionAttributes(d *schema.ResourceData, instance *ec2.Instanc
 	}
 
 	d.Set("ebs_optimized", instance.EbsOptimized)
-	if instance.SubnetId != nil && *instance.SubnetId != "" {
+	if aws.StringValue(instance.SubnetId) != "" {
 		d.Set("source_dest_check", instance.SourceDestCheck)
 	}
 
-	if instance.Monitoring != nil && instance.Monitoring.State != nil {
-		monitoringState := *instance.Monitoring.State
+	if instance.Monitoring != nil {
+		monitoringState := aws.StringValue(instance.Monitoring.State)
 		d.Set("monitoring", monitoringState == "enabled" || monitoringState == "pending")
 	}
 
-	d.Set("tags", tagsToMap(instance.Tags))
+	if err := d.Set("tags", keyvaluetags.Ec2KeyValueTags(instance.Tags).IgnoreAws().IgnoreConfig(ignoreTagsConfig).Map()); err != nil {
+		return fmt.Errorf("error setting tags: %w", err)
+	}
 
 	// Security Groups
 	if err := readSecurityGroups(d, instance, conn); err != nil {
@@ -364,9 +542,39 @@ func instanceDescriptionAttributes(d *schema.ResourceData, instance *ec2.Instanc
 		if err != nil {
 			return err
 		}
-		if attr.UserData.Value != nil {
-			d.Set("user_data", userDataHashSum(*attr.UserData.Value))
+		if attr != nil && attr.UserData != nil && attr.UserData.Value != nil {
+			d.Set("user_data", userDataHashSum(aws.StringValue(attr.UserData.Value)))
+			if d.Get("get_user_data").(bool) {
+				d.Set("user_data_base64", attr.UserData.Value)
+			}
 		}
+	}
+
+	var creditSpecifications []map[string]interface{}
+
+	// AWS Standard will return InstanceCreditSpecification.NotSupported errors for EC2 Instance IDs outside T2 and T3 instance types
+	// Reference: https://github.com/hashicorp/terraform-provider-aws/issues/8055
+	if strings.HasPrefix(aws.StringValue(instance.InstanceType), "t2") || strings.HasPrefix(aws.StringValue(instance.InstanceType), "t3") {
+		var err error
+		creditSpecifications, err = getCreditSpecifications(conn, d.Id())
+
+		// Ignore UnsupportedOperation errors for AWS China and GovCloud (US)
+		// Reference: https://github.com/hashicorp/terraform-provider-aws/pull/4362
+		if err != nil && !isAWSErr(err, "UnsupportedOperation", "") {
+			return fmt.Errorf("error getting EC2 Instance (%s) Credit Specifications: %w", d.Id(), err)
+		}
+	}
+
+	if err := d.Set("credit_specification", creditSpecifications); err != nil {
+		return fmt.Errorf("error setting credit_specification: %w", err)
+	}
+
+	if err := d.Set("metadata_options", flattenEc2InstanceMetadataOptions(instance.MetadataOptions)); err != nil {
+		return fmt.Errorf("error setting metadata_options: %w", err)
+	}
+
+	if err := d.Set("enclave_options", flattenEc2EnclaveOptions(instance.EnclaveOptions)); err != nil {
+		return fmt.Errorf("error setting enclave_options: %w", err)
 	}
 
 	return nil
