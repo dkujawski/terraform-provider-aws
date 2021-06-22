@@ -7,7 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/hashicorp/terraform/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
 func resourceAwsS3BucketReplication() *schema.Resource {
@@ -126,7 +126,7 @@ func resourceAwsS3BucketReplicationPut(d *schema.ResourceData, meta interface{})
 	rc := buildAwsS3BucketReplicationConfiguration(c)
 
 	params := &s3.PutBucketReplicationInput{
-		Bucket: aws.String(bucket),
+		Bucket:                   aws.String(bucket),
 		ReplicationConfiguration: rc,
 	}
 
