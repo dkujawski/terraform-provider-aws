@@ -1070,6 +1070,7 @@ func Provider() *schema.Provider {
 			"aws_s3_bucket_metric":                                    resourceAwsS3BucketMetric(),
 			"aws_s3_bucket_inventory":                                 resourceAwsS3BucketInventory(),
 			"aws_s3_bucket_replication_configuration":                 resourceAwsS3BucketReplicationConfiguration(),
+			"aws_s3_bucket_replication_rule":                          resourceAwsS3BucketReplicationRule(),
 			"aws_s3_object_copy":                                      resourceAwsS3ObjectCopy(),
 			"aws_s3control_bucket":                                    resourceAwsS3ControlBucket(),
 			"aws_s3control_bucket_policy":                             resourceAwsS3ControlBucketPolicy(),
