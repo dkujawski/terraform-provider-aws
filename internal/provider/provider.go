@@ -126,6 +126,7 @@ import (
 	"github.com/hashicorp/terraform-provider-aws/internal/service/logs"
 	"github.com/hashicorp/terraform-provider-aws/internal/service/macie"
 	"github.com/hashicorp/terraform-provider-aws/internal/service/macie2"
+	"github.com/hashicorp/terraform-provider-aws/internal/service/mediaconnect"
 	"github.com/hashicorp/terraform-provider-aws/internal/service/mediaconvert"
 	"github.com/hashicorp/terraform-provider-aws/internal/service/medialive"
 	"github.com/hashicorp/terraform-provider-aws/internal/service/mediapackage"
@@ -1735,6 +1736,10 @@ func New(_ context.Context) (*schema.Provider, error) {
 			"aws_macie2_member":                              macie2.ResourceMember(),
 			"aws_macie2_organization_admin_account":          macie2.ResourceOrganizationAdminAccount(),
 			"aws_macie2_classification_export_configuration": macie2.ResourceClassificationExportConfiguration(),
+
+			"aws_mediaconnect_entitlement": mediaconnect.ResourceEntitlement(),
+			"aws_mediaconnect_flow":        mediaconnect.ResourceFlow(),
+			"aws_mediaconnect_output":      mediaconnect.ResourceOutput(),
 
 			"aws_media_convert_queue": mediaconvert.ResourceQueue(),
 
