@@ -84,7 +84,6 @@ func ResourceBucket() *schema.Resource {
 
 			"arn": {
 				Type:     schema.TypeString,
-				Optional: true,
 				Computed: true,
 			},
 
@@ -230,7 +229,6 @@ func ResourceBucket() *schema.Resource {
 
 			"hosted_zone_id": {
 				Type:     schema.TypeString,
-				Optional: true,
 				Computed: true,
 			},
 
@@ -2732,7 +2730,6 @@ func flattenBucketReplicationConfiguration(r *s3.ReplicationConfiguration) []int
 func flattenBucketReplicationConfigurationReplicationRuleDestination(d *s3.Destination) []interface{} {
 	if d == nil {
 		return []interface{}{}
-
 	}
 
 	m := make(map[string]interface{})
