@@ -2,6 +2,7 @@
 package conns
 
 import (
+	"github.com/aws/aws-sdk-go-v2/service/mediaconnect"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/accessanalyzer"
@@ -184,7 +185,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/marketplacecommerceanalytics"
 	"github.com/aws/aws-sdk-go/service/marketplaceentitlementservice"
 	"github.com/aws/aws-sdk-go/service/marketplacemetering"
-	"github.com/aws/aws-sdk-go/service/mediaconnect"
 	"github.com/aws/aws-sdk-go/service/mediaconvert"
 	"github.com/aws/aws-sdk-go/service/mediapackage"
 	"github.com/aws/aws-sdk-go/service/mediapackagevod"

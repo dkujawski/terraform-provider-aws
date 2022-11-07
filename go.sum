@@ -33,6 +33,8 @@ github.com/aws/aws-sdk-go v1.44.117/go.mod h1:y4AeaBuwd2Lk+GepC1E9v0qOiTws0MIWAX
 github.com/aws/aws-sdk-go-v2 v1.16.3/go.mod h1:ytwTPBG6fXTZLxxeeCCWj2/EMYp/xDUgX+OET6TLNNU=
 github.com/aws/aws-sdk-go-v2 v1.16.16 h1:M1fj4FE2lB4NzRb9Y0xdWsn2P0+2UHVxwKyOa4YJNjk=
 github.com/aws/aws-sdk-go-v2 v1.16.16/go.mod h1:SwiyXi/1zTUZ6KIAmLK5V5ll8SiURNUYOqTerZPaF9k=
+github.com/aws/aws-sdk-go-v2 v1.17.0 h1:kWm8OZGx0Zvd6PsOfjFtwbw7+uWYp65DK8suo7WVznw=
+github.com/aws/aws-sdk-go-v2 v1.17.0/go.mod h1:SwiyXi/1zTUZ6KIAmLK5V5ll8SiURNUYOqTerZPaF9k=
 github.com/aws/aws-sdk-go-v2/config v1.15.4 h1:P4mesY1hYUxru4f9SU0XxNKXmzfxsD0FtMIPRBjkH7Q=
 github.com/aws/aws-sdk-go-v2/config v1.15.4/go.mod h1:ZijHHh0xd/A+ZY53az0qzC5tT46kt4JVCePf2NX9Lk4=
 github.com/aws/aws-sdk-go-v2/credentials v1.12.0 h1:4R/NqlcRFSkR0wxOhgHi+agGpbEr5qMCjn7VqUIJY+E=
@@ -64,6 +66,8 @@ github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.13.17 h1:HfVVR1vItaG6l
 github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.13.17/go.mod h1:YqMdV+gEKCQ59NrB7rzrJdALeBIsYiVi8Inj3+KcqHI=
 github.com/aws/aws-sdk-go-v2/service/kendra v1.35.0 h1:nOHdZFfH438FwUfAVQePSXlVD3Rux20n8KxJeGYlabY=
 github.com/aws/aws-sdk-go-v2/service/kendra v1.35.0/go.mod h1:vpAlARGh4pK3T2oNoW6osfGCEMGy3JDKJJfcnlzv+aM=
+github.com/aws/aws-sdk-go-v2/service/mediaconnect v1.17.1 h1:3csH8Ls2xTGMr7bCdrUTJV9y+4qDMiHJFv0Y4ovc94o=
+github.com/aws/aws-sdk-go-v2/service/mediaconnect v1.17.1/go.mod h1:JEawsL9lvjxQrrJoxlV8jNuv/tEpNeMf23XiEMUBNDI=
 github.com/aws/aws-sdk-go-v2/service/medialive v1.24.0 h1:jhTyDaqVh2D6gyC38PXnvndHpKwf9ZUIXy/gAWdCtVY=
 github.com/aws/aws-sdk-go-v2/service/medialive v1.24.0/go.mod h1:/bC1uYQWsh+RS6RZH4l/jqohermqOCv1Mlhx9jVndlQ=
 github.com/aws/aws-sdk-go-v2/service/rolesanywhere v1.0.10 h1:FYBnb1z07t3qpAFddDMIJskPEjWEIMbK4Dv/FWDX06s=

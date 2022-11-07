@@ -40,8 +40,8 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	mediaconnect "github.com/aws/aws-sdk-go-v2/service/mediaconnect"
-	types "github.com/aws/aws-sdk-go-v2/service/mediaconnect/types"
+	"github.com/aws/aws-sdk-go-v2/service/mediaconnect"
+	"github.com/aws/aws-sdk-go-v2/service/mediaconnect/types"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"

@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/identitystore"
 	"github.com/aws/aws-sdk-go-v2/service/inspector2"
 	"github.com/aws/aws-sdk-go-v2/service/kendra"
+	"github.com/aws/aws-sdk-go-v2/service/mediaconnect"
 	"github.com/aws/aws-sdk-go-v2/service/medialive"
 	"github.com/aws/aws-sdk-go-v2/service/rolesanywhere"
 	"github.com/aws/aws-sdk-go-v2/service/route53domains"
@@ -195,7 +196,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/marketplacecommerceanalytics"
 	"github.com/aws/aws-sdk-go/service/marketplaceentitlementservice"
 	"github.com/aws/aws-sdk-go/service/marketplacemetering"
-	"github.com/aws/aws-sdk-go/service/mediaconnect"
 	"github.com/aws/aws-sdk-go/service/mediaconvert"
 	"github.com/aws/aws-sdk-go/service/mediapackage"
 	"github.com/aws/aws-sdk-go/service/mediapackagevod"
@@ -513,7 +513,7 @@ type AWSClient struct {
 	MarketplaceCommerceAnalyticsConn *marketplacecommerceanalytics.MarketplaceCommerceAnalytics
 	MarketplaceEntitlementConn       *marketplaceentitlementservice.MarketplaceEntitlementService
 	MarketplaceMeteringConn          *marketplacemetering.MarketplaceMetering
-	MediaConnectConn                 *mediaconnect.MediaConnect
+	MediaConnectConn                 *mediaconnect.Client
 	MediaConvertConn                 *mediaconvert.MediaConvert
 	MediaLiveConn                    *medialive.Client
 	MediaPackageConn                 *mediapackage.MediaPackage

@@ -1,39 +1,6 @@
 package mediaconnect
 
-// **PLEASE DELETE THIS AND ALL TIP COMMENTS BEFORE SUBMITTING A PR FOR REVIEW!**
-//
-// TIP: ==== INTRODUCTION ====
-// Thank you for trying the skaff tool!
-//
-// You have opted to include these helpful comments. They all include "TIP:"
-// to help you find and remove them when you're done with them.
-//
-// While some aspects of this file are customized to your input, the
-// scaffold tool does *not* look at the AWS API and ensure it has correct
-// function, structure, and variable names. It makes guesses based on
-// commonalities. You will need to make significant adjustments.
-//
-// In other words, as generated, this is a rough outline of the work you will
-// need to do. If something doesn't make sense for your situation, get rid of
-// it.
-//
-// Remember to register this new resource in the provider
-// (internal/provider/provider.go) once you finish. Otherwise, Terraform won't
-// know about it.
-
 import (
-	// TIP: ==== IMPORTS ====
-	// This is a common set of imports but not customized to your code since
-	// your code hasn't been written yet. Make sure you, your IDE, or
-	// goimports -w <file> fixes these imports.
-	//
-	// The provider linter wants your imports to be in two groups: first,
-	// standard library (i.e., "fmt" or "strings"), second, everything else.
-	//
-	// Also, AWS Go SDK v2 may handle nested structures differently than v1,
-	// using the services/mediaconnect/types package. If so, you'll
-	// need to import types and reference the nested types, e.g., as
-	// types.<Type Name>.
 	"context"
 	"errors"
 	"log"
@@ -42,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/mediaconnect"
 	"github.com/aws/aws-sdk-go-v2/service/mediaconnect/types"
+	tftypes "github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -55,19 +23,8 @@ import (
 	"github.com/hashicorp/terraform-provider-aws/names"
 )
 
-// TIP: ==== FILE STRUCTURE ====
-// All resources should follow this basic outline. Improve this resource's
-// maintainability by sticking to it.
-//
-// 1. Package declaration
-// 2. Imports
-// 3. Main resource function with schema
-// 4. Create, read, update, delete functions (in that order)
-// 5. Other functions (flatteners, expanders, waiters, finders, etc.)
 func ResourceFlow() *schema.Resource {
 	return &schema.Resource{
-		// TIP: ==== ASSIGN CRUD FUNCTIONS ====
-		// These 4 functions handle CRUD responsibilities below.
 		CreateWithoutTimeout: resourceFlowCreate,
 		ReadWithoutTimeout:   resourceFlowRead,
 		UpdateWithoutTimeout: resourceFlowUpdate,
@@ -97,47 +54,6 @@ func ResourceFlow() *schema.Resource {
 			Delete: schema.DefaultTimeout(30 * time.Minute),
 		},
 
-		// TIP: ==== SCHEMA ====
-		// In the schema, add each of the attributes in snake case (e.g.,
-		// delete_automated_backups).
-		//
-		// Formatting rules:
-		// * Alphabetize attributes to make them easier to find.
-		// * Do not add a blank line between attributes.
-		//
-		// Attribute basics:
-		// * If a user can provide a value ("configure a value") for an
-		//   attribute (e.g., instances = 5), we call the attribute an
-		//   "argument."
-		// * You change the way users interact with attributes using:
-		//     - Required
-		//     - Optional
-		//     - Computed
-		// * There are only four valid combinations:
-		//
-		// 1. Required only - the user must provide a value
-		// Required: true,
-		//
-		// 2. Optional only - the user can configure or omit a value; do not
-		//    use Default or DefaultFunc
-		// Optional: true,
-		//
-		// 3. Computed only - the provider can provide a value but the user
-		//    cannot, i.e., read-only
-		// Computed: true,
-		//
-		// 4. Optional AND Computed - the provider or user can provide a value;
-		//    use this combination if you are using Default or DefaultFunc
-		// Optional: true,
-		// Computed: true,
-		//
-		// You will typically find arguments in the input struct
-		// (e.g., CreateDBInstanceInput) for the create operation. Sometimes
-		// they are only in the input struct (e.g., ModifyDBInstanceInput) for
-		// the modify operation.
-		//
-		// For more about schema options, visit
-		// https://pkg.go.dev/github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema#Schema
 		Schema: map[string]*schema.Schema{
 			"arn": {
 				Type:     schema.TypeString,
@@ -158,7 +74,7 @@ func ResourceFlow() *schema.Resource {
 							Required:         true,
 							ValidateDiagFunc: enum.Validate[types.MaintenanceDay](),
 						},
-						"maintenance_hour": {
+						"maintenance_start_hour": {
 							Type:     schema.TypeString,
 							Required: true,
 						},
@@ -499,46 +415,38 @@ const (
 )
 
 func resourceFlowCreate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	// TIP: ==== RESOURCE CREATE ====
-	// Generally, the Create function should do the following things. Make
-	// sure there is a good reason if you don't do one of these.
-	//
-	// 1. Get a client connection to the relevant service
-	// 2. Populate a create input structure
-	// 3. Call the AWS create/put function
-	// 4. Using the output from the create function, set the minimum arguments
-	//    and attributes for the Read function to work. At a minimum, set the
-	//    resource ID. E.g., d.SetId(<Identifier, such as AWS ID or ARN>)
-	// 5. Use a waiter to wait for create to complete
-	// 6. Call the Read function in the Create return
-
-	// TIP: -- 1. Get a client connection to the relevant service
 	conn := meta.(*conns.AWSClient).MediaConnectConn
 
-	// TIP: -- 2. Populate a create input structure
 	in := &mediaconnect.CreateFlowInput{
-		// TIP: Mandatory or fields that will always be present can be set when
-		// you create the Input structure. (Replace these with real fields.)
-		FlowName: aws.String(d.Get("name").(string)),
-		FlowType: aws.String(d.Get("type").(string)),
+		Name: aws.String(d.Get("name").(string)),
 	}
 
-	if v, ok := d.GetOk("max_size"); ok {
-		// TIP: Optional fields should be set based on whether or not they are
-		// used.
-		in.MaxSize = aws.Int64(int64(v.(int)))
+	if v, ok := d.GetOk("availability_zone"); ok {
+		in.AvailabilityZone = aws.String(v.(string))
 	}
 
-	if v, ok := d.GetOk("complex_argument"); ok && len(v.([]interface{})) > 0 {
-		// TIP: Use an expander to assign a complex argument.
-		in.ComplexArguments = expandComplexArguments(v.([]interface{}))
+	if v, ok := d.GetOk("maintenance"); ok && len(v.([]interface{})) > 0 {
+		in.Maintenance = expandMaintenance(v.([]interface{}))
 	}
 
-	// TIP: -- 3. Call the AWS create function
+	if v, ok := d.GetOk("mediastream"); ok && len(v.([]interface{})) > 0 {
+		in.MediaStreams = expandMediaStreams(v.([]interface{}))
+	}
+
+	if v, ok := d.GetOk("source"); ok && len(v.([]interface{})) > 0 {
+		in.Sources = expandSources(v.([]interface{}))
+	}
+
+	if v, ok := d.GetOk("source_failover_config"); ok && len(v.([]interface{})) > 0 {
+		in.SourceFailoverConfig = expandSourceFailoverConfig(v.([]interface{}))
+	}
+
+	if v, ok := d.GetOk("vpc_interface"); ok && len(v.([]interface{})) > 0 {
+		in.VpcInterfaces = expandVpcInterfaces(v.([]interface{}))
+	}
+
 	out, err := conn.CreateFlow(ctx, in)
 	if err != nil {
-		// TIP: Since d.SetId() has not been called yet, you cannot use d.Id()
-		// in error messages at this point.
 		return create.DiagError(names.MediaConnect, create.ErrActionCreating, ResNameFlow, d.Get("name").(string), err)
 	}
 
@@ -546,39 +454,20 @@ func resourceFlowCreate(ctx context.Context, d *schema.ResourceData, meta interf
 		return create.DiagError(names.MediaConnect, create.ErrActionCreating, ResNameFlow, d.Get("name").(string), errors.New("empty output"))
 	}
 
-	// TIP: -- 4. Set the minimum arguments and/or attributes for the Read function to
-	// work.
-	d.SetId(aws.ToString(out.Flow.FlowID))
+	d.SetId(aws.ToString(out.Flow.FlowArn))
 
-	// TIP: -- 5. Use a waiter to wait for create to complete
 	if _, err := waitFlowCreated(ctx, conn, d.Id(), d.Timeout(schema.TimeoutCreate)); err != nil {
 		return create.DiagError(names.MediaConnect, create.ErrActionWaitingForCreation, ResNameFlow, d.Id(), err)
 	}
 
-	// TIP: -- 6. Call the Read function in the Create return
 	return resourceFlowRead(ctx, d, meta)
 }
 
 func resourceFlowRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	// TIP: ==== RESOURCE READ ====
-	// Generally, the Read function should do the following things. Make
-	// sure there is a good reason if you don't do one of these.
-	//
-	// 1. Get a client connection to the relevant service
-	// 2. Get the resource from AWS
-	// 3. Set ID to empty where resource is not new and not found
-	// 4. Set the arguments and attributes
-	// 5. Set the tags
-	// 6. Return nil
-
-	// TIP: -- 1. Get a client connection to the relevant service
 	conn := meta.(*conns.AWSClient).MediaConnectConn
 
-	// TIP: -- 2. Get the resource from AWS using an API Get, List, or Describe-
-	// type function, or, better yet, using a finder.
 	out, err := findFlowByID(ctx, conn, d.Id())
 
-	// TIP: -- 3. Set ID to empty where resource is not new and not found
 	if !d.IsNewResource() && tfresource.NotFound(err) {
 		log.Printf("[WARN] MediaConnect Flow (%s) not found, removing from state", d.Id())
 		d.SetId("")
@@ -589,109 +478,101 @@ func resourceFlowRead(ctx context.Context, d *schema.ResourceData, meta interfac
 		return create.DiagError(names.MediaConnect, create.ErrActionReading, ResNameFlow, d.Id(), err)
 	}
 
-	// TIP: -- 4. Set the arguments and attributes
-	//
-	// For simple data types (i.e., schema.TypeString, schema.TypeBool,
-	// schema.TypeInt, and schema.TypeFloat), a simple Set call (e.g.,
-	// d.Set("arn", out.Arn) is sufficient. No error or nil checking is
-	// necessary.
-	//
-	// However, there are some situations where more handling is needed.
-	// a. Complex data types (e.g., schema.TypeList, schema.TypeSet)
-	// b. Where errorneous diffs occur. For example, a schema.TypeString may be
-	//    a JSON. AWS may return the JSON in a slightly different order but it
-	//    is equivalent to what is already set. In that case, you may check if
-	//    it is equivalent before setting the different JSON.
-	d.Set("arn", out.Arn)
-	d.Set("name", out.Name)
+	d.Set("arn", out.FlowArn)
+	d.Set("availability_zone", out.AvailabilityZone)
 
-	// TIP: Setting a complex type.
-	// For more information, see:
-	// https://hashicorp.github.io/terraform-provider-aws/data-handling-and-conversion/#data-handling-and-conversion
-	// https://hashicorp.github.io/terraform-provider-aws/data-handling-and-conversion/#flatten-functions-for-blocks
-	// https://hashicorp.github.io/terraform-provider-aws/data-handling-and-conversion/#root-typeset-of-resource-and-aws-list-of-structure
-	if err := d.Set("complex_argument", flattenComplexArguments(out.ComplexArguments)); err != nil {
-		return create.DiagError(names.MediaConnect, create.ErrActionSetting, ResNameFlow, d.Id(), err)
-	}
+	d.Set("maintenance", flattenMaintenance(out.Maintenance))
+	d.Set("mediastream", flattenMediastream(out.MediaStreams))
+	d.Set("source", flattenSource(out.Source))
+	d.Set("source_failover_config", flattenSourceFailoverConfig(out.SourceFailoverConfig))
+	d.Set("vpc_interface", flattenVpcInterface(out.VpcInterfaces))
 
-	// TIP: Setting a JSON string to avoid errorneous diffs.
-	p, err := verify.SecondJSONUnlessEquivalent(d.Get("policy").(string), aws.ToString(out.Policy))
-	if err != nil {
-		return create.DiagError(names.MediaConnect, create.ErrActionSetting, ResNameFlow, d.Id(), err)
-	}
-
-	p, err = structure.NormalizeJsonString(p)
-	if err != nil {
-		return create.DiagError(names.MediaConnect, create.ErrActionSetting, ResNameFlow, d.Id(), err)
-	}
-
-	d.Set("policy", p)
-
-	// TIP: -- 6. Return nil
 	return nil
 }
 
 func resourceFlowUpdate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	// TIP: ==== RESOURCE UPDATE ====
-	// Not all resources have Update functions. There are a few reasons:
-	// a. The AWS API does not support changing a resource
-	// b. All arguments have ForceNew: true, set
-	// c. The AWS API uses a create call to modify an existing resource
-	//
-	// In the cases of a. and b., the main resource function will not have a
-	// UpdateWithoutTimeout defined. In the case of c., Update and Create are
-	// the same.
-	//
-	// The rest of the time, there should be an Update function and it should
-	// do the following things. Make sure there is a good reason if you don't
-	// do one of these.
-	//
-	// 1. Get a client connection to the relevant service
-	// 2. Populate a modify input structure and check for changes
-	// 3. Call the AWS modify/update function
-	// 4. Use a waiter to wait for update to complete
-	// 5. Call the Read function in the Update return
+	update, err := maybeUpdateFlow(d, meta)
+	if err != nil {
+		return err
+	}
+	update, err = maybeUpdateFlowSource(d, meta)
+	if err != nil {
+		return err
+	}
+	update, err = maybeUpdateFlowTags(d, meta)
+	if err != nil {
+		return err
+	}
+	if !update {
+		return nil
+	}
+	return resourceFlowRead(ctx, d, meta)
+}
 
-	// TIP: -- 1. Get a client connection to the relevant service
+func maybeUpdateFlow(d *schema.ResourceData, meta interface{}) (bool, diag.Diagnostics) {
 	conn := meta.(*conns.AWSClient).MediaConnectConn
-
-	// TIP: -- 2. Populate a modify input structure and check for changes
-	//
-	// When creating the input structure, only include mandatory fields. Other
-	// fields are set as needed. You can use a flag, such as update below, to
-	// determine if a certain portion of arguments have been changed and
-	// whether to call the AWS update function.
 	update := false
 
 	in := &mediaconnect.UpdateFlowInput{
-		Id: aws.String(d.Id()),
+		FlowArn: aws.String(d.Id()),
 	}
 
-	if d.HasChanges("an_argument") {
-		in.AnArgument = aws.String(d.Get("an_argument").(string))
+	if d.HasChanges("maintenance") {
+		in.Maintenance = expandMaintenance(d.Get("maintenance").(*schema.Set).List())
+		update = true
+	}
+
+	if d.HasChanges("source_failover_config") {
+		in.SourceFailoverConfig = expandSourceFailoverConfig(d.Get("source_failover_config").(*schema.Set).List())
 		update = true
 	}
 
 	if !update {
-		// TIP: If update doesn't do anything at all, which is rare, you can
-		// return nil. Otherwise, return a read call, as below.
-		return nil
+		return update, nil
 	}
 
-	// TIP: -- 3. Call the AWS modify/update function
 	log.Printf("[DEBUG] Updating MediaConnect Flow (%s): %#v", d.Id(), in)
 	out, err := conn.UpdateFlow(ctx, in)
 	if err != nil {
-		return create.DiagError(names.MediaConnect, create.ErrActionUpdating, ResNameFlow, d.Id(), err)
+		return update, create.DiagError(names.MediaConnect, create.ErrActionUpdating, ResNameFlow, d.Id(), err)
 	}
 
-	// TIP: -- 4. Use a waiter to wait for update to complete
 	if _, err := waitFlowUpdated(ctx, conn, aws.ToString(out.OperationId), d.Timeout(schema.TimeoutUpdate)); err != nil {
-		return create.DiagError(names.MediaConnect, create.ErrActionWaitingForUpdate, ResNameFlow, d.Id(), err)
+		return update, create.DiagError(names.MediaConnect, create.ErrActionWaitingForUpdate, ResNameFlow, d.Id(), err)
+	}
+	return update, nil
+}
+
+func maybeUpdateFlowSource(d *schema.ResourceData, meta interface{}) (bool, diag.Diagnostics) {
+	conn := meta.(*conns.AWSClient).MediaConnectConn
+	update := false
+
+	if d.HasChanges("source") {
+		sources := expandSources(d.Get("source").(*schema.Set).Set())
+		for source := range(sources) {
+			in := &mediaconnect.UpdateFlowSourceInput{
+				FlowArn: aws.String(d.Id()),
+			}
+
+
+		}
+		update = true
 	}
 
-	// TIP: -- 5. Call the Read function in the Update return
-	return resourceFlowRead(ctx, d, meta)
+	if !update {
+		return update, nil
+	}
+
+	log.Printf("[DEBUG] Updating MediaConnect Flow (%s): %#v", d.Id(), in)
+	out, err := conn.UpdateFlow(ctx, in)
+	if err != nil {
+		return update, create.DiagError(names.MediaConnect, create.ErrActionUpdating, ResNameFlow, d.Id(), err)
+	}
+
+	if _, err := waitFlowUpdated(ctx, conn, aws.ToString(out.OperationId), d.Timeout(schema.TimeoutUpdate)); err != nil {
+		return update, create.DiagError(names.MediaConnect, create.ErrActionWaitingForUpdate, ResNameFlow, d.Id(), err)
+	}
+	return update, nil
 }
 
 func resourceFlowDelete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
@@ -856,13 +737,13 @@ func statusFlow(ctx context.Context, conn *mediaconnect.Client, id string) resou
 // comes in handy in other places besides the status function. As a result, it
 // is good practice to define it separately.
 
-func findFlowByID(ctx context.Context, conn *mediaconnect.Client, id string) (*mediaconnect.Flow, error) {
-	in := &mediaconnect.GetFlowInput{
-		Id: aws.String(id),
+func findFlowByID(ctx context.Context, conn *mediaconnect.Client, id string) (*types.Flow, error) {
+	in := &mediaconnect.DescribeFlowInput{
+		FlowArn: aws.String(id),
 	}
-	out, err := conn.GetFlow(ctx, in)
+	out, err := conn.DescribeFlow(ctx, in)
 	if err != nil {
-		var nfe *types.ResourceNotFoundException
+		var nfe *types.NotFoundException
 		if errors.As(err, &nfe) {
 			return nil, &resource.NotFoundError{
 				LastError:   err,
@@ -880,33 +761,84 @@ func findFlowByID(ctx context.Context, conn *mediaconnect.Client, id string) (*m
 	return out.Flow, nil
 }
 
-// TIP: ==== FLEX ====
-// Flatteners and expanders ("flex" functions) help handle complex data
-// types. Flatteners take an API data type and return something you can use in
-// a d.Set() call. In other words, flatteners translate from AWS -> Terraform.
-//
-// On the other hand, expanders take a Terraform data structure and return
-// something that you can send to the AWS API. In other words, expanders
-// translate from Terraform -> AWS.
-//
-// See more:
-// https://hashicorp.github.io/terraform-provider-aws/data-handling-and-conversion/
-func flattenComplexArgument(apiObject *mediaconnect.ComplexArgument) map[string]interface{} {
+func flattenMaintenance(apiObject *types.Maintenance) map[string]interface{} {
 	if apiObject == nil {
 		return nil
 	}
 
 	m := map[string]interface{}{}
 
-	if v := apiObject.SubFieldOne; v != nil {
-		m["sub_field_one"] = aws.ToString(v)
+	if v := apiObject.MaintenanceDay; v != "" {
+		m["sub_field_one"] = v
 	}
 
-	if v := apiObject.SubFieldTwo; v != nil {
-		m["sub_field_two"] = aws.ToString(v)
+	if v := apiObject.MaintenanceDeadline; v != nil {
+		m["maintenance_deadline"] = aws.ToString(v)
+	}
+
+	if v := apiObject.MaintenanceScheduledDate; v != nil {
+		m["maintenance_schedule_date"] = aws.ToString(v)
+	}
+
+	if v := apiObject.MaintenanceStartHour; v != nil {
+		m["maintenance_start_hour"] = aws.ToString(v)
 	}
 
 	return m
+}
+
+func flattenFmtp(apiObject *types.Fmtp) []fmtp {
+	if apiObject == nil {
+		return nil
+	}
+	f := fmtp{
+		ChannelOrder:   tftypes.String{Value: aws.ToString(apiObject.ChannelOrder)},
+		Colorimetry:    apiObject.Colorimetry,
+		ExactFramerate: tftypes.String{Value: aws.ToString(apiObject.ExactFramerate)},
+		Par:            tftypes.String{Value: aws.ToString(apiObject.Par)},
+		Range:          apiObject.Range,
+		ScanMode:       apiObject.ScanMode,
+		Tcs:            apiObject.Tcs,
+	}
+	return []fmtp{f}
+}
+
+func flattenMediaStreamAttributes(apiObject *types.MediaStreamAttributes) []mediaStreamAttributes {
+	if apiObject == nil {
+		return nil
+	}
+	attrs := mediaStreamAttributes{
+		Fmtp: flattenFmtp(apiObject.Fmtp),
+	}
+	if v := apiObject.Lang; v != nil {
+		attrs.Lang = tftypes.String{Value: aws.ToString(v)}
+	}
+	return []mediaStreamAttributes{attrs}
+}
+
+func flattenMediastream(apiObjects []types.MediaStream) []mediaStream {
+	if len(apiObjects) == 0 {
+		return nil
+	}
+	var tfList []mediaStream
+	for _, apiObject := range apiObjects {
+		if apiObject == (types.MediaStream{}) {
+			continue
+		}
+		ms := mediaStream{
+			Fmt:             apiObject.Fmt,
+			MediaStreamId:   apiObject.MediaStreamId,
+			MediaStreamName: tftypes.String{Value: aws.ToString(apiObject.MediaStreamName)},
+			MediaStreamType: apiObject.MediaStreamType,
+			Attributes:      flattenMediaStreamAttributes(apiObject.Attributes),
+		}
+		tfList = append(tfList, ms)
+	}
+	return tfList
+}
+
+func flattenSource(apiObjects []types.Source) []source {
+
 }
 
 // TIP: Often the AWS API will return a slice of structures in response to a
@@ -931,72 +863,347 @@ func flattenComplexArguments(apiObjects []*mediaconnect.ComplexArgument) []inter
 	return l
 }
 
-// TIP: Remember, as mentioned above, expanders take a Terraform data structure
-// and return something that you can send to the AWS API. In other words,
-// expanders translate from Terraform -> AWS.
-//
-// See more:
-// https://hashicorp.github.io/terraform-provider-aws/data-handling-and-conversion/
-func expandComplexArgument(tfMap map[string]interface{}) *mediaconnect.ComplexArgument {
-	if tfMap == nil {
-		return nil
-	}
-
-	a := &mediaconnect.ComplexArgument{}
-
-	if v, ok := tfMap["sub_field_one"].(string); ok && v != "" {
-		a.SubFieldOne = aws.String(v)
-	}
-
-	if v, ok := tfMap["sub_field_two"].(string); ok && v != "" {
-		a.SubFieldTwo = aws.String(v)
-	}
-
-	return a
-}
-
-// TIP: Even when you have a list with max length of 1, this plural function
-// works brilliantly. However, if the AWS API takes a structure rather than a
-// slice of structures, you will not need it.
-func expandComplexArguments(tfList []interface{}) []*mediaconnect.ComplexArgument {
-	// TIP: The AWS API can be picky about whether you send a nil or zero-
-	// length for an argument that should be cleared. For example, in some
-	// cases, if you send a nil value, the AWS API interprets that as "make no
-	// changes" when what you want to say is "remove everything." Sometimes
-	// using a zero-length list will cause an error.
-	//
-	// As a result, here are two options. Usually, option 1, nil, will work as
-	// expected, clearing the field. But, test going from something to nothing
-	// to make sure it works. If not, try the second option.
-
-	// TIP: Option 1: Returning nil for zero-length list
+func expandMaintenance(tfList []interface{}) *types.AddMaintenance {
 	if len(tfList) == 0 {
 		return nil
 	}
 
-	var s []*mediaconnect.ComplexArgument
+	m := &types.AddMaintenance{}
+	tfMap := tfList[0].(map[string]interface{})
 
-	// TIP: Option 2: Return zero-length list for zero-length list. If option 1 does
-	// not work, after testing going from something to nothing (if that is
-	// possible), uncomment out the next line and remove option 1.
-	//
-	// s := make([]*mediaconnect.ComplexArgument, 0)
+	if v, ok := tfMap["maintenance_day"].(string); ok && v != "" {
+		m.MaintenanceDay = types.MaintenanceDay(v)
+	}
 
-	for _, r := range tfList {
-		m, ok := r.(map[string]interface{})
+	if v, ok := tfMap["maintenance_start_hour"].(string); ok && v != "" {
+		m.MaintenanceStartHour = aws.String(v)
+	}
+
+	return m
+}
+
+func expandFmtp(tfMap map[string]interface{}) *types.FmtpRequest {
+	f := &types.FmtpRequest{}
+
+	if val, ok := tfMap["channel_order"]; ok {
+		f.ChannelOrder = aws.String(val.(string))
+	}
+	if val, ok := tfMap["colorimetry"]; ok {
+		f.Colorimetry = val.(types.Colorimetry)
+	}
+	if val, ok := tfMap["exact_framerate"]; ok {
+		f.ExactFramerate = aws.String(val.(string))
+	}
+	if val, ok := tfMap["par"]; ok {
+		f.Par = aws.String(val.(string))
+	}
+	if val, ok := tfMap["range"]; ok {
+		f.Range = val.(types.Range)
+	}
+	if val, ok := tfMap["scan_mode"]; ok {
+		f.ScanMode = val.(types.ScanMode)
+	}
+	if val, ok := tfMap["tcs"]; ok {
+		f.Tcs = val.(types.Tcs)
+	}
+
+	return f
+}
+
+func expandMediaStreamAttributes(tfMap map[string]interface{}) *types.MediaStreamAttributesRequest {
+	ma := &types.MediaStreamAttributesRequest{}
+
+	if val, ok := tfMap["fmtp"]; ok {
+		ma.Fmtp = expandFmtp(val.(map[string]interface{}))
+	}
+
+	if val, ok := tfMap["lang"]; ok {
+		ma.Lang = aws.String(val.(string))
+	}
+
+	return ma
+}
+
+func expandMediaStreams(tfList []interface{}) []types.AddMediaStreamRequest {
+	if len(tfList) == 0 {
+		return nil
+	}
+	var amsr []types.AddMediaStreamRequest
+
+	for _, tfMapRaw := range tfList {
+		tfMap, ok := tfMapRaw.(map[string]interface{})
 
 		if !ok {
 			continue
 		}
 
-		a := expandComplexArgument(m)
+		var ms types.AddMediaStreamRequest
 
-		if a == nil {
-			continue
+		if val, ok := tfMap["attributes"]; ok {
+			ms.Attributes = expandMediaStreamAttributes(val.(map[string]interface{}))
+		}
+		if val, ok := tfMap["clock_rate"]; ok {
+			ms.ClockRate = int32(val.(int))
+		}
+		if val, ok := tfMap["description"]; ok {
+			ms.Description = aws.String(val.(string))
+		}
+		if val, ok := tfMap["media_stream_id"]; ok {
+			ms.MediaStreamId = val.(int32)
+		}
+		if val, ok := tfMap["media_stream_name"]; ok {
+			ms.MediaStreamName = aws.String(val.(string))
+		}
+		if val, ok := tfMap["media_stream_type"]; ok {
+			ms.MediaStreamType = val.(types.MediaStreamType)
+		}
+		if val, ok := tfMap["video_format"]; ok {
+			ms.VideoFormat = aws.String(val.(string))
 		}
 
-		s = append(s, a)
+		amsr = append(amsr, ms)
+
 	}
 
-	return s
+	return amsr
+}
+
+func expandInterfaceRequest(tfMap map[string]interface{}) *types.InterfaceRequest {
+	return &types.InterfaceRequest{
+		Name: aws.String(tfMap["name"].(string)),
+	}
+}
+
+func expandInputConfigurations(tfList []interface{}) []types.InputConfigurationRequest {
+	if len(tfList) == 0 {
+		return nil
+	}
+
+	var icr []types.InputConfigurationRequest
+
+	for _, tfMapRaw := range tfList {
+		tfMap, ok := tfMapRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		i := types.InputConfigurationRequest{
+			InputPort: int32(tfMap["input_port"].(int)),
+			Interface: expandInterfaceRequest(tfMap["interface"].(map[string]interface{})),
+		}
+		icr = append(icr, i)
+	}
+	return icr
+}
+func expandMediaStreamSourceConfigurations(tfList []interface{}) []types.MediaStreamSourceConfigurationRequest {
+	if len(tfList) == 0 {
+		return nil
+	}
+
+	var msscr []types.MediaStreamSourceConfigurationRequest
+
+	for _, tfMapRaw := range tfList {
+		tfMap, ok := tfMapRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		c := types.MediaStreamSourceConfigurationRequest{
+			EncodingName:    tfMap["encoding_name"].(types.EncodingName),
+			MediaStreamName: aws.String(tfMap["media_stream_name"].(string)),
+		}
+
+		if val, ok := tfMap["input_configurations"]; ok {
+			c.InputConfigurations = expandInputConfigurations(val.([]interface{}))
+		}
+
+		msscr = append(msscr, c)
+	}
+	return msscr
+}
+
+func expandEncryption(tfMap map[string]interface{}) *types.Encryption {
+	e := &types.Encryption{RoleArn: aws.String(tfMap["role_arn"].(string))}
+
+	if val, ok := tfMap["algorithm"]; ok {
+		e.Algorithm = val.(types.Algorithm)
+	}
+	if val, ok := tfMap["constant_initialization_vector"]; ok {
+		e.ConstantInitializationVector = aws.String(val.(string))
+	}
+	if val, ok := tfMap["device_id"]; ok {
+		e.DeviceId = aws.String(val.(string))
+	}
+	if val, ok := tfMap["key_type"]; ok {
+		e.KeyType = val.(types.KeyType)
+	}
+	if val, ok := tfMap["region"]; ok {
+		e.Region = aws.String(val.(string))
+	}
+	if val, ok := tfMap["resource_id"]; ok {
+		e.ResourceId = aws.String(val.(string))
+	}
+	if val, ok := tfMap["secret_arn"]; ok {
+		e.SecretArn = aws.String(val.(string))
+	}
+	if val, ok := tfMap["url"]; ok {
+		e.Url = aws.String(val.(string))
+	}
+
+	return e
+}
+
+func expandSources(tfList []interface{}) []types.SetSourceRequest {
+	if len(tfList) == 0 {
+		return nil
+	}
+
+	var ssr []types.SetSourceRequest
+
+	for _, tfMapRaw := range tfList {
+		tfMap, ok := tfMapRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		var s types.SetSourceRequest
+		if val, ok := tfMap["decryption"]; ok {
+			s.Decryption = expandEncryption(val.(map[string]interface{}))
+		}
+		if val, ok := tfMap["description"]; ok {
+			s.Description = aws.String(val.(string))
+		}
+		if val, ok := tfMap["entitlement_arn"]; ok {
+			s.EntitlementArn = aws.String(val.(string))
+		}
+		if val, ok := tfMap["ingest_port"]; ok {
+			s.IngestPort = int32(val.(int))
+		}
+		if val, ok := tfMap["max_bitrate"]; ok {
+			s.MaxBitrate = int32(val.(int))
+		}
+		if val, ok := tfMap["max_latency"]; ok {
+			s.MaxLatency = int32(val.(int))
+		}
+		if val, ok := tfMap["max_sync_buffer"]; ok {
+			s.MaxSyncBuffer = int32(val.(int))
+		}
+		if val, ok := tfMap["media_stream_source_configurations"]; ok {
+			s.MediaStreamSourceConfigurations = expandMediaStreamSourceConfigurations(val.([]interface{}))
+		}
+		if val, ok := tfMap["min_latency"]; ok {
+			s.MinLatency = int32(val.(int))
+		}
+		if val, ok := tfMap["name"]; ok {
+			s.Name = aws.String(val.(string))
+		}
+		if val, ok := tfMap["protocol"]; ok {
+			s.Protocol = val.(types.Protocol)
+		}
+		if val, ok := tfMap["sender_control_port"]; ok {
+			s.SenderControlPort = int32(val.(int))
+		}
+		if val, ok := tfMap["sender_ip_address"]; ok {
+			s.SenderIpAddress = aws.String(val.(string))
+		}
+		if val, ok := tfMap["source_listener_address"]; ok {
+			s.SourceListenerAddress = aws.String(val.(string))
+		}
+		if val, ok := tfMap["source_listener_port"]; ok {
+			s.SourceListenerPort = int32(val.(int))
+		}
+		if val, ok := tfMap["stream_id"]; ok {
+			s.StreamId = aws.String(val.(string))
+		}
+		if val, ok := tfMap["vpc_interface_name"]; ok {
+			s.VpcInterfaceName = aws.String(val.(string))
+		}
+		if val, ok := tfMap["white_list_cidr"]; ok {
+			s.WhitelistCidr = aws.String(val.(string))
+		}
+
+		ssr = append(ssr, s)
+
+	}
+	return ssr
+}
+
+func expandSourcePriority(tfMap map[string]interface{}) *types.SourcePriority {
+	return &types.SourcePriority{
+		PrimarySource: aws.String(tfMap["primary_source"].(string)),
+	}
+}
+
+func expandSourceFailoverConfig(tfList []interface{}) *types.FailoverConfig {
+	if len(tfList) == 0 {
+		return nil
+	}
+	tfMap := tfList[0].(map[string]interface{})
+	fc := &types.FailoverConfig{}
+	if val, ok := tfMap["failover_mode"]; ok {
+		fc.FailoverMode = val.(types.FailoverMode)
+	}
+	if val, ok := tfMap["recovery_window"]; ok {
+		fc.RecoveryWindow = int32(val.(int))
+	}
+	if val, ok := tfMap["source_priority"]; ok {
+		fc.SourcePriority = expandSourcePriority(val.(map[string]interface{}))
+	}
+	if val, ok := tfMap["state"]; ok {
+		fc.State = val.(types.State)
+	}
+	return fc
+}
+
+func expandVpcInterfaces(tfList []interface{}) []types.VpcInterfaceRequest {
+	if len(tfList) == 0 {
+		return nil
+	}
+	var vir []types.VpcInterfaceRequest
+	for _, tfMapRaw := range tfList {
+		tfMap, ok := tfMapRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		v := types.VpcInterfaceRequest{
+			Name:             aws.String(tfMap["name"].(string)),
+			RoleArn:          aws.String(tfMap["role_arn"].(string)),
+			SecurityGroupIds: tfMap["security_group_ids"].([]string),
+			SubnetId:         aws.String(tfMap["subnet_id"].(string)),
+		}
+
+		if val, ok := tfMap["network_interface_type"]; ok {
+			v.NetworkInterfaceType = val.(types.NetworkInterfaceType)
+		}
+		vir = append(vir, v)
+	}
+	return vir
+}
+
+type mediaStream struct {
+	Attributes      []mediaStreamAttributes `tfsdk:"attributes,omitempty"`
+	ClockRate       int32                   `tfsdk:"clock_rate,omitempty"`
+	Description     tftypes.String          `tfsdk:"description,omitempty"`
+	Fmt             int32                   `tfsdk:"fmt,omitempty"`
+	MediaStreamId   int32                   `tfsdk:"media_stream_id,omitempty"`
+	M:wa
+	ediaStreamName tftypes.String          `tfsdk:"media_stream_name,omitempty"`
+	MediaStreamType types.MediaStreamType   `tfsdk:"media_stream_type,omitempty"`
+	VideoFormat     tftypes.String          `tfsdk:"video_format,omitempty"`
+}
+
+type mediaStreamAttributes struct {
+	Fmtp []fmtp         `tfsdk:"fmtp,omitempty"`
+	Lang tftypes.String `tfsdk:"lang,omitempty"`
+}
+
+type fmtp struct {
+	ChannelOrder   tftypes.String    `tfsdk:"channel_order,omitempty"`
+	Colorimetry    types.Colorimetry `tfsdk:"colorimetry,omitempty"`
+	ExactFramerate tftypes.String    `tfsdk:"exact_framerate,omitempty"`
+	Par            tftypes.String    `tfsdk:"par,omitempty"`
+	Range          types.Range       `tfsdk:"range,omitempty"`
+	ScanMode       types.ScanMode    `tfsdk:"scan_mode,omitempty"`
+	Tcs            types.Tcs         `tfsdk:"tcs,omitempty"`
+}
+
+type source struct {
+
 }

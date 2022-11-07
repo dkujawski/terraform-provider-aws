@@ -1,4 +1,5 @@
 package mediaconnect_test
+
 // **PLEASE DELETE THIS AND ALL TIP COMMENTS BEFORE SUBMITTING A PR FOR REVIEW!**
 //
 // TIP: ==== INTRODUCTION ====
@@ -51,8 +52,8 @@ import (
 	"github.com/hashicorp/terraform-provider-aws/internal/create"
 
 	// TIP: You will often need to import the package that this test file lives
-    // in. Since it is in the "test" context, it must import the package to use
-    // any normal context constants, variables, or functions.
+	// in. Since it is in the "test" context, it must import the package to use
+	// any normal context constants, variables, or functions.
 	tfmediaconnect "github.com/hashicorp/terraform-provider-aws/internal/service/mediaconnect"
 	"github.com/hashicorp/terraform-provider-aws/names"
 )
@@ -69,7 +70,6 @@ import (
 // 6. All the other tests
 // 7. Helper functions (exists, destroy, check, etc.)
 // 8. Functions that return Terraform configurations
-
 
 // TIP: ==== UNIT TESTS ====
 // This is an example of a unit test. Its name is not prefixed with
@@ -131,7 +131,6 @@ func TestEntitlementExampleUnitTest(t *testing.T) {
 	}
 }
 
-
 // TIP: ==== ACCEPTANCE TESTS ====
 // This is an example of a basic acceptance test. This should test as much of
 // standard functionality of the resource as possible, and test importing, if
@@ -140,8 +139,8 @@ func TestEntitlementExampleUnitTest(t *testing.T) {
 //
 // Acceptance test access AWS and cost money to run.
 func TestAccMediaConnectEntitlement_basic(t *testing.T) {
-    // TIP: This is a long-running test guard for tests that run longer than
-    // 300s (5 min) generally.
+	// TIP: This is a long-running test guard for tests that run longer than
+	// 300s (5 min) generally.
 	if testing.Short() {
 		t.Skip("skipping long-running test in short mode")
 	}
