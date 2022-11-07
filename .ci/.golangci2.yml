@@ -9,8 +9,10 @@ issues:
 linters:
   disable-all: true
   enable:
+    - asciicheck
     - errcheck
     - exportloopref
+    - gocritic
     - gofmt
     - gomnd
     - gosimple
@@ -22,14 +24,25 @@ linters:
     - nolintlint
     - staticcheck
     - stylecheck
+    - typecheck
     - unconvert
     - unparam
     - unused
     - vet
+    - vetshadow
+    - whitespace
 
 linters-settings:
   errcheck:
     ignore: github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema:ForceNew|Set,fmt:.*,io:Close
+  gocritic:
+    enabled-tags:
+      - diagnostic
+    disabled-tags:
+      - style
+      - performance
+      - experimental
+      - opinionated
   gomnd:
     settings:
       mnd:
@@ -42,6 +55,7 @@ linters-settings:
           - request.WithWaiterMaxAttempts
           # AWS Provider
           - nullable.*
+          - tfresource.With*
           # Terraform Plugin SDK
           - resource.Retry
           - schema.DefaultTimeout
