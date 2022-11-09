@@ -3,599 +3,439 @@ package mediaconnect
 import (
 	"context"
 	"errors"
-	"log"
-	"time"
+	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/mediaconnect"
-	"github.com/aws/aws-sdk-go-v2/service/mediaconnect/types"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/structure"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
+	mctypes "github.com/aws/aws-sdk-go-v2/service/mediaconnect/types"
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+	resourceHelper "github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-provider-aws/internal/conns"
 	"github.com/hashicorp/terraform-provider-aws/internal/create"
-	"github.com/hashicorp/terraform-provider-aws/internal/enum"
-	tftags "github.com/hashicorp/terraform-provider-aws/internal/tags"
+	"github.com/hashicorp/terraform-provider-aws/internal/experimental/intf"
 	"github.com/hashicorp/terraform-provider-aws/internal/tfresource"
-	"github.com/hashicorp/terraform-provider-aws/internal/verify"
 	"github.com/hashicorp/terraform-provider-aws/names"
 )
 
-func ResourceEntitlement() *schema.Resource {
-	return &schema.Resource{
-		// TIP: ==== ASSIGN CRUD FUNCTIONS ====
-		// These 4 functions handle CRUD responsibilities below.
-		CreateWithoutTimeout: resourceEntitlementCreate,
-		ReadWithoutTimeout:   resourceEntitlementRead,
-		UpdateWithoutTimeout: resourceEntitlementUpdate,
-		DeleteWithoutTimeout: resourceEntitlementDelete,
+func init() {
+	registerFrameworkResourceFactory(newResourceEntitlement)
+}
 
-		// TIP: ==== TERRAFORM IMPORTING ====
-		// If Read can get all the information it needs from the Identifier
-		// (i.e., d.Id()), you can use the Passthrough importer. Otherwise,
-		// you'll need a custom import function.
-		//
-		// See more:
-		// https://hashicorp.github.io/terraform-provider-aws/add-import-support/
-		// https://hashicorp.github.io/terraform-provider-aws/data-handling-and-conversion/#implicit-state-passthrough
-		// https://hashicorp.github.io/terraform-provider-aws/data-handling-and-conversion/#virtual-attributes
-		Importer: &schema.ResourceImporter{
-			StateContext: schema.ImportStatePassthroughContext,
-		},
+func newResourceEntitlement(_ context.Context) (intf.ResourceWithConfigureAndImportState, error) {
+	return &entitlement{}, nil
+}
 
-		// TIP: ==== CONFIGURABLE TIMEOUTS ====
-		// Users can configure timeout lengths but you need to use the times they
-		// provide. Access the timeout they configure (or the defaults) using,
-		// e.g., d.Timeout(schema.TimeoutCreate) (see below). The times here are
-		// the defaults if they don't configure timeouts.
-		Timeouts: &schema.ResourceTimeout{
-			Create: schema.DefaultTimeout(30 * time.Minute),
-			Update: schema.DefaultTimeout(30 * time.Minute),
-			Delete: schema.DefaultTimeout(30 * time.Minute),
-		},
-
-		// TIP: ==== SCHEMA ====
-		// In the schema, add each of the attributes in snake case (e.g.,
-		// delete_automated_backups).
-		//
-		// Formatting rules:
-		// * Alphabetize attributes to make them easier to find.
-		// * Do not add a blank line between attributes.
-		//
-		// Attribute basics:
-		// * If a user can provide a value ("configure a value") for an
-		//   attribute (e.g., instances = 5), we call the attribute an
-		//   "argument."
-		// * You change the way users interact with attributes using:
-		//     - Required
-		//     - Optional
-		//     - Computed
-		// * There are only four valid combinations:
-		//
-		// 1. Required only - the user must provide a value
-		// Required: true,
-		//
-		// 2. Optional only - the user can configure or omit a value; do not
-		//    use Default or DefaultFunc
-		// Optional: true,
-		//
-		// 3. Computed only - the provider can provide a value but the user
-		//    cannot, i.e., read-only
-		// Computed: true,
-		//
-		// 4. Optional AND Computed - the provider or user can provide a value;
-		//    use this combination if you are using Default or DefaultFunc
-		// Optional: true,
-		// Computed: true,
-		//
-		// You will typically find arguments in the input struct
-		// (e.g., CreateDBInstanceInput) for the create operation. Sometimes
-		// they are only in the input struct (e.g., ModifyDBInstanceInput) for
-		// the modify operation.
-		//
-		// For more about schema options, visit
-		// https://pkg.go.dev/github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema#Schema
-		Schema: map[string]*schema.Schema{
-			"arn": {
-				Type:     schema.TypeString,
-				Computed: true,
-			},
-			"entitlement": {
-				Type:     schema.TypeSet,
-				Required: true,
-				Elem: &schema.Resource{
-					Schema: map[string]*schema.Schema{
-						"data_transfer_subscriber_fee_percent": {
-							Type:     schema.TypeInt,
-							Optional: true,
-						},
-						"description": {
-							Type:     schema.TypeString,
-							Optional: true,
-						},
-						"encryption": {
-							Type:     schema.TypeList,
-							Optional: true,
-							MaxItems: 1,
-							Elem: &schema.Resource{
-								Schema: map[string]*schema.Schema{
-									"algorithm": {
-										Type:             schema.TypeString,
-										Optional:         true,
-										ValidateDiagFunc: enum.Validate[types.Algorithm](),
-									},
-									"constant_initialization_vector": {
-										Type:     schema.TypeString,
-										Optional: true,
-									},
-									"device_id": {
-										Type:     schema.TypeString,
-										Optional: true,
-									},
-									"key_type": {
-										Type:             schema.TypeString,
-										Optional:         true,
-										ValidateDiagFunc: enum.Validate[types.KeyType](),
-									},
-									"region": {
-										Type:     schema.TypeString,
-										Optional: true,
-									},
-									"resource_id": {
-										Type:     schema.TypeString,
-										Optional: true,
-									},
-									"role_arn": {
-										Type:             schema.TypeString,
-										Required:         true,
-										ValidateDiagFunc: validation.ToDiagFunc(verify.ValidARN),
-									},
-									"secret_arn": {
-										Type:             schema.TypeString,
-										Optional:         true,
-										ValidateDiagFunc: validation.ToDiagFunc(verify.ValidARN),
-									},
-									"url": {
-										Type:     schema.TypeString,
-										Optional: true,
-									},
-								},
-							},
-						},
-						"entitlement_status": {
-							Type:     schema.TypeString,
-							Optional: true,
-						},
-						"name": {
-							Type:     schema.TypeString,
-							Optional: true,
-						},
-						"subscribers": {
-							Type:     schema.TypeList,
-							Required: true,
-							Elem:     &schema.Schema{Type: schema.TypeString},
-						},
-					},
-				},
-			},
-			"flow_arn": {
-				Type:             schema.TypeString,
-				Required:         true,
-				ValidateDiagFunc: validation.ToDiagFunc(verify.ValidARN),
-			},
-		},
-
-		CustomizeDiff: verify.SetTagsDiff,
-	}
+func NewResourceEntitlement(_ context.Context) resource.Resource {
+	return &entitlement{}
 }
 
 const (
 	ResNameEntitlement = "Entitlement"
 )
 
-func resourceEntitlementCreate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	// TIP: ==== RESOURCE CREATE ====
-	// Generally, the Create function should do the following things. Make
-	// sure there is a good reason if you don't do one of these.
-	//
-	// 1. Get a client connection to the relevant service
-	// 2. Populate a create input structure
-	// 3. Call the AWS create/put function
-	// 4. Using the output from the create function, set the minimum arguments
-	//    and attributes for the Read function to work. At a minimum, set the
-	//    resource ID. E.g., d.SetId(<Identifier, such as AWS ID or ARN>)
-	// 5. Use a waiter to wait for create to complete
-	// 6. Call the Read function in the Create return
-
-	// TIP: -- 1. Get a client connection to the relevant service
-	conn := meta.(*conns.AWSClient).MediaConnectConn
-
-	// TIP: -- 2. Populate a create input structure
-	in := &mediaconnect.CreateEntitlementInput{
-		// TIP: Mandatory or fields that will always be present can be set when
-		// you create the Input structure. (Replace these with real fields.)
-		EntitlementName: aws.String(d.Get("name").(string)),
-		EntitlementType: aws.String(d.Get("type").(string)),
-	}
-
-	if v, ok := d.GetOk("max_size"); ok {
-		// TIP: Optional fields should be set based on whether or not they are
-		// used.
-		in.MaxSize = aws.Int64(int64(v.(int)))
-	}
-
-	if v, ok := d.GetOk("complex_argument"); ok && len(v.([]interface{})) > 0 {
-		// TIP: Use an expander to assign a complex argument.
-		in.ComplexArguments = expandComplexArguments(v.([]interface{}))
-	}
-
-	// TIP: Not all resources support tags and tags don't always make sense. If
-	// your resource doesn't need tags, you can remove the tags lines here and
-	// below. Many resources do include tags so this a reminder to include them
-	// where possible.
-	defaultTagsConfig := meta.(*conns.AWSClient).DefaultTagsConfig
-	tags := defaultTagsConfig.MergeTags(tftags.New(d.Get("tags").(map[string]interface{})))
-
-	if len(tags) > 0 {
-		in.Tags = Tags(tags.IgnoreAWS())
-	}
-
-	// TIP: -- 3. Call the AWS create function
-	out, err := conn.CreateEntitlement(ctx, in)
-	if err != nil {
-		// TIP: Since d.SetId() has not been called yet, you cannot use d.Id()
-		// in error messages at this point.
-		return create.DiagError(names.MediaConnect, create.ErrActionCreating, ResNameEntitlement, d.Get("name").(string), err)
-	}
-
-	if out == nil || out.Entitlement == nil {
-		return create.DiagError(names.MediaConnect, create.ErrActionCreating, ResNameEntitlement, d.Get("name").(string), errors.New("empty output"))
-	}
-
-	// TIP: -- 4. Set the minimum arguments and/or attributes for the Read function to
-	// work.
-	d.SetId(aws.ToString(out.Entitlement.EntitlementID))
-
-	// TIP: -- 5. Use a waiter to wait for create to complete
-	if _, err := waitEntitlementCreated(ctx, conn, d.Id(), d.Timeout(schema.TimeoutCreate)); err != nil {
-		return create.DiagError(names.MediaConnect, create.ErrActionWaitingForCreation, ResNameEntitlement, d.Id(), err)
-	}
-
-	// TIP: -- 6. Call the Read function in the Create return
-	return resourceEntitlementRead(ctx, d, meta)
+type entitlement struct {
+	meta *conns.AWSClient
 }
 
-func resourceEntitlementRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	// TIP: ==== RESOURCE READ ====
-	// Generally, the Read function should do the following things. Make
-	// sure there is a good reason if you don't do one of these.
-	//
-	// 1. Get a client connection to the relevant service
-	// 2. Get the resource from AWS
-	// 3. Set ID to empty where resource is not new and not found
-	// 4. Set the arguments and attributes
-	// 5. Set the tags
-	// 6. Return nil
-
-	// TIP: -- 1. Get a client connection to the relevant service
-	conn := meta.(*conns.AWSClient).MediaConnectConn
-
-	// TIP: -- 2. Get the resource from AWS using an API Get, List, or Describe-
-	// type function, or, better yet, using a finder.
-	out, err := findEntitlementByID(ctx, conn, d.Id())
-
-	// TIP: -- 3. Set ID to empty where resource is not new and not found
-	if !d.IsNewResource() && tfresource.NotFound(err) {
-		log.Printf("[WARN] MediaConnect Entitlement (%s) not found, removing from state", d.Id())
-		d.SetId("")
-		return nil
-	}
-
-	if err != nil {
-		return create.DiagError(names.MediaConnect, create.ErrActionReading, ResNameEntitlement, d.Id(), err)
-	}
-
-	// TIP: -- 4. Set the arguments and attributes
-	//
-	// For simple data types (i.e., schema.TypeString, schema.TypeBool,
-	// schema.TypeInt, and schema.TypeFloat), a simple Set call (e.g.,
-	// d.Set("arn", out.Arn) is sufficient. No error or nil checking is
-	// necessary.
-	//
-	// However, there are some situations where more handling is needed.
-	// a. Complex data types (e.g., schema.TypeList, schema.TypeSet)
-	// b. Where errorneous diffs occur. For example, a schema.TypeString may be
-	//    a JSON. AWS may return the JSON in a slightly different order but it
-	//    is equivalent to what is already set. In that case, you may check if
-	//    it is equivalent before setting the different JSON.
-	d.Set("arn", out.Arn)
-	d.Set("name", out.Name)
-
-	// TIP: Setting a complex type.
-	// For more information, see:
-	// https://hashicorp.github.io/terraform-provider-aws/data-handling-and-conversion/#data-handling-and-conversion
-	// https://hashicorp.github.io/terraform-provider-aws/data-handling-and-conversion/#flatten-functions-for-blocks
-	// https://hashicorp.github.io/terraform-provider-aws/data-handling-and-conversion/#root-typeset-of-resource-and-aws-list-of-structure
-	if err := d.Set("complex_argument", flattenComplexArguments(out.ComplexArguments)); err != nil {
-		return create.DiagError(names.MediaConnect, create.ErrActionSetting, ResNameEntitlement, d.Id(), err)
-	}
-
-	// TIP: Setting a JSON string to avoid errorneous diffs.
-	p, err := verify.SecondJSONUnlessEquivalent(d.Get("policy").(string), aws.ToString(out.Policy))
-	if err != nil {
-		return create.DiagError(names.MediaConnect, create.ErrActionSetting, ResNameEntitlement, d.Id(), err)
-	}
-
-	p, err = structure.NormalizeJsonString(p)
-	if err != nil {
-		return create.DiagError(names.MediaConnect, create.ErrActionSetting, ResNameEntitlement, d.Id(), err)
-	}
-
-	d.Set("policy", p)
-
-	// TIP: -- 5. Set the tags
-	//
-	// TIP: Not all resources support tags and tags don't always make sense. If
-	// your resource doesn't need tags, you can remove the tags lines here and
-	// below. Many resources do include tags so this a reminder to include them
-	// where possible.
-	tags, err := ListTags(ctx, conn, d.Id())
-	if err != nil {
-		return create.DiagError(names.MediaConnect, create.ErrActionReading, ResNameEntitlement, d.Id(), err)
-	}
-
-	defaultTagsConfig := meta.(*conns.AWSClient).DefaultTagsConfig
-	ignoreTagsConfig := meta.(*conns.AWSClient).IgnoreTagsConfig
-	tags = tags.IgnoreAWS().IgnoreConfig(ignoreTagsConfig)
-
-	if err := d.Set("tags", tags.RemoveDefaultConfig(defaultTagsConfig).Map()); err != nil {
-		return create.DiagError(names.MediaConnect, create.ErrActionSetting, ResNameEntitlement, d.Id(), err)
-	}
-
-	if err := d.Set("tags_all", tags.Map()); err != nil {
-		return create.DiagError(names.MediaConnect, create.ErrActionSetting, ResNameEntitlement, d.Id(), err)
-	}
-
-	// TIP: -- 6. Return nil
-	return nil
+func (m *entitlement) Metadata(_ context.Context, request resource.MetadataRequest, response *resource.MetadataResponse) {
+	response.TypeName = "aws_mediaconnect_entitlement"
 }
 
-func resourceEntitlementUpdate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	// TIP: ==== RESOURCE UPDATE ====
-	// Not all resources have Update functions. There are a few reasons:
-	// a. The AWS API does not support changing a resource
-	// b. All arguments have ForceNew: true, set
-	// c. The AWS API uses a create call to modify an existing resource
-	//
-	// In the cases of a. and b., the main resource function will not have a
-	// UpdateWithoutTimeout defined. In the case of c., Update and Create are
-	// the same.
-	//
-	// The rest of the time, there should be an Update function and it should
-	// do the following things. Make sure there is a good reason if you don't
-	// do one of these.
-	//
-	// 1. Get a client connection to the relevant service
-	// 2. Populate a modify input structure and check for changes
-	// 3. Call the AWS modify/update function
-	// 4. Use a waiter to wait for update to complete
-	// 5. Call the Read function in the Update return
+func (m *entitlement) GetSchema(context.Context) (tfsdk.Schema, diag.Diagnostics) {
+	schema := tfsdk.Schema{
+		Attributes: map[string]tfsdk.Attribute{
+			"id": {
+				Type:     types.StringType,
+				Computed: true,
+				PlanModifiers: []tfsdk.AttributePlanModifier{
+					resource.UseStateForUnknown(),
+				},
+			},
+			"entitlement_arn": {
+				Type:     types.StringType,
+				Computed: true,
+				PlanModifiers: []tfsdk.AttributePlanModifier{
+					resource.UseStateForUnknown(),
+				},
+			},
+			"name": {
+				Type:     types.StringType,
+				Required: true,
+				PlanModifiers: tfsdk.AttributePlanModifiers{
+					resource.RequiresReplace(),
+				},
+			},
+			"flow_arn": {
+				Type:     types.StringType,
+				Required: true,
+			},
+			"data_transfur_subscriber_fee_percent": {
+				Type:     types.Int64Type,
+				Required: true,
+				Validators: []tfsdk.AttributeValidator{
+					int64validator.Between(0, 100),
+				},
+			},
+			"description": {
+				Type:     types.StringType,
+				Required: true,
+			},
+			"entitlement_status": {
+				Type:     types.StringType,
+				Required: true,
+				Validators: []tfsdk.AttributeValidator{
+					stringvalidator.OneOf(entitlementStatusToSlice(mctypes.EntitlementStatus("").Values())...),
+				},
+			},
+			"subscribers": {
+				Type: types.ListType{
+					ElemType: types.StringType,
+				},
+				Required: true,
+			},
+		},
+		Blocks: map[string]tfsdk.Block{
 
-	// TIP: -- 1. Get a client connection to the relevant service
-	conn := meta.(*conns.AWSClient).MediaConnectConn
+			"encryption": {
+				NestingMode: tfsdk.BlockNestingModeList,
+				MinItems:    1,
+				MaxItems:    1,
+				Attributes: map[string]tfsdk.Attribute{
+					"role_arn": {
+						Type:     types.StringType,
+						Required: true,
+					},
+					"algorithm": {
+						Type: types.StringType,
+						Validators: []tfsdk.AttributeValidator{
+							stringvalidator.OneOf(algorithmsToSlice(mctypes.Algorithm("").Values())...),
+						},
+					},
+					"constant_initialization_vector": {
+						Type: types.StringType,
+					},
+					"device_id": {
+						Type: types.StringType,
+					},
+					"key_type": {
+						Type: types.StringType,
+						Validators: []tfsdk.AttributeValidator{
+							stringvalidator.OneOf(keyTypeToSlice(mctypes.KeyType("").Values())...),
+						},
+					},
+					"region": {
+						Type: types.StringType,
+					},
+					"resource_id": {
+						Type: types.StringType,
+					},
+					"secret_arn": {
+						Type: types.StringType,
+					},
+					"url": {
+						Type: types.StringType,
+					},
+				},
+			},
+		},
+	}
 
-	// TIP: -- 2. Populate a modify input structure and check for changes
-	//
-	// When creating the input structure, only include mandatory fields. Other
-	// fields are set as needed. You can use a flag, such as update below, to
-	// determine if a certain portion of arguments have been changed and
-	// whether to call the AWS update function.
-	update := false
+	return schema, nil
+}
+
+func (m *entitlement) Configure(_ context.Context, request resource.ConfigureRequest, response *resource.ConfigureResponse) {
+	if v, ok := request.ProviderData.(*conns.AWSClient); ok {
+		m.meta = v
+	}
+}
+
+func (m *entitlement) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	conn := m.meta.MediaConnectConn
+
+	var plan resourceEntitlementData
+	diags := req.Plan.Get(ctx, &plan)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	subscribersAsString := make([]string, len(plan.Subscribers.Elems))
+	resp.Diagnostics.Append((plan.Subscribers.ElementsAs(ctx, &subscribersAsString, false))...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	entitlementEncryptionList := make([]encryption, 1)
+	resp.Diagnostics.Append(plan.Encryption.ElementsAs(ctx, &entitlementEncryptionList, false)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	entitlementEncryption, err := expandEntitlementEncryption(ctx, entitlementEncryptionList)
+	resp.Diagnostics.Append(err...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	ger := mctypes.GrantEntitlementRequest{
+		Subscribers:                      subscribersAsString,
+		DataTransferSubscriberFeePercent: int32(plan.DataTransferSubscriberFeePercent.Value),
+		Description:                      aws.String(plan.Description.Value),
+		Encryption:                       entitlementEncryption,
+		EntitlementStatus:                mctypes.EntitlementStatus(plan.EntitlementStatus.Value),
+		Name:                             aws.String(plan.Name.Value),
+	}
+
+	in := &mediaconnect.GrantFlowEntitlementsInput{
+		FlowArn: aws.String(plan.FlowArn.Value),
+		Entitlements: []mctypes.GrantEntitlementRequest{ger},
+	}
+
+	out, errCreate := conn.GrantFlowEntitlements(ctx, in)
+
+	if errCreate != nil {
+		resp.Diagnostics.AddError(
+			create.ProblemStandardMessage(names.MediaConnect, create.ErrActionCreating, ResNameEntitlement, plan.Name.String(), nil),
+			errCreate.Error(),
+		)
+		return
+	}
+
+	var result resourceEntitlementData
+
+	result.ID = types.String{Value: fmt.Sprintf("%s/%s", programName, multiplexId)}
+	result.ProgramName = types.String{Value: aws.ToString(out.Entitlement.ProgramName)}
+	result.MultiplexID = types.String{Value: plan.MultiplexID.Value}
+	result.EntitlementSettings = flattenEntitlementSettings(out.Entitlement.EntitlementSettings, isStateMuxSet)
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, result)...)
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
+}
+
+func (m *entitlement) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	conn := m.meta.MediaConnectConn
+
+	var state resourceEntitlementData
+	diags := req.State.Get(ctx, &state)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	programName, multiplexId, err := ParseEntitlementID(state.ID.Value)
+
+	if err != nil {
+		resp.Diagnostics.AddError(
+			create.ProblemStandardMessage(names.MediaConnect, create.ErrActionReading, ResNameEntitlement, state.ProgramName.String(), nil),
+			err.Error(),
+		)
+		return
+	}
+
+	out, err := FindEntitlementByID(ctx, conn, multiplexId, programName)
+
+	if tfresource.NotFound(err) {
+		diag.NewWarningDiagnostic(
+			"AWS Resource Not Found During Refresh",
+			fmt.Sprintf("Automatically removing from Terraform State instead of returning the error, which may trigger resource recreation. Original Error: %s", err.Error()),
+		)
+		resp.State.RemoveResource(ctx)
+
+		return
+	}
+
+	if err != nil {
+		resp.Diagnostics.AddError(
+			create.ProblemStandardMessage(names.MediaConnect, create.ErrActionReading, ResNameEntitlement, state.ProgramName.String(), nil),
+			err.Error(),
+		)
+		return
+	}
+
+	sm := make([]videoSettings, 1)
+	attErr := req.State.GetAttribute(ctx, path.Root("entitlement_settings").
+		AtListIndex(0).AtName("video_settings"), &sm)
+
+	resp.Diagnostics.Append(attErr...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	var stateMuxIsNull bool
+	if len(sm) > 0 {
+		if len(sm[0].StatemuxSettings.Elems) == 0 {
+			stateMuxIsNull = true
+		}
+	}
+	state.EntitlementSettings = flattenEntitlementSettings(out.EntitlementSettings, stateMuxIsNull)
+	state.ProgramName = types.String{Value: aws.ToString(out.ProgramName)}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
+}
+
+func (m *entitlement) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	conn := m.meta.MediaConnectConn
+
+	var plan resourceEntitlementData
+	diags := req.Plan.Get(ctx, &plan)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	programName, multiplexId, err := ParseEntitlementID(plan.ID.Value)
+
+	if err != nil {
+		resp.Diagnostics.AddError(
+			create.ProblemStandardMessage(names.MediaConnect, create.ErrActionReading, ResNameEntitlement, plan.ProgramName.String(), nil),
+			err.Error(),
+		)
+		return
+	}
+
+	mps := make([]entitlementSettings, 1)
+	resp.Diagnostics.Append(plan.EntitlementSettings.ElementsAs(ctx, &mps, false)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	mpSettings, stateMuxIsNull, errExpand := expandEntitlementSettings(ctx, mps)
+
+	resp.Diagnostics.Append(errExpand...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	in := &mediaconnect.UpdateEntitlementInput{
-		Id: aws.String(d.Id()),
+		MultiplexId:         aws.String(multiplexId),
+		ProgramName:         aws.String(programName),
+		EntitlementSettings: mpSettings,
 	}
 
-	if d.HasChanges("an_argument") {
-		in.AnArgument = aws.String(d.Get("an_argument").(string))
-		update = true
+	_, errUpdate := conn.UpdateEntitlement(ctx, in)
+
+	if errUpdate != nil {
+		resp.Diagnostics.AddError(
+			create.ProblemStandardMessage(names.MediaConnect, create.ErrActionUpdating, ResNameEntitlement, plan.ProgramName.String(), nil),
+			errUpdate.Error(),
+		)
+		return
 	}
 
-	if !update {
-		// TIP: If update doesn't do anything at all, which is rare, you can
-		// return nil. Otherwise, return a read call, as below.
-		return nil
+	//Need to find multiplex program because output from update does not provide state data
+	out, errUpdate := FindEntitlementByID(ctx, conn, multiplexId, programName)
+
+	if errUpdate != nil {
+		resp.Diagnostics.AddError(
+			create.ProblemStandardMessage(names.MediaConnect, create.ErrActionUpdating, ResNameEntitlement, plan.ProgramName.String(), nil),
+			errUpdate.Error(),
+		)
+		return
 	}
 
-	// TIP: -- 3. Call the AWS modify/update function
-	log.Printf("[DEBUG] Updating MediaConnect Entitlement (%s): %#v", d.Id(), in)
-	out, err := conn.UpdateEntitlement(ctx, in)
-	if err != nil {
-		return create.DiagError(names.MediaConnect, create.ErrActionUpdating, ResNameEntitlement, d.Id(), err)
-	}
+	plan.EntitlementSettings = flattenEntitlementSettings(out.EntitlementSettings, stateMuxIsNull)
 
-	// TIP: -- 4. Use a waiter to wait for update to complete
-	if _, err := waitEntitlementUpdated(ctx, conn, aws.ToString(out.OperationId), d.Timeout(schema.TimeoutUpdate)); err != nil {
-		return create.DiagError(names.MediaConnect, create.ErrActionWaitingForUpdate, ResNameEntitlement, d.Id(), err)
-	}
-
-	// TIP: -- 5. Call the Read function in the Update return
-	return resourceEntitlementRead(ctx, d, meta)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func resourceEntitlementDelete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	// TIP: ==== RESOURCE DELETE ====
-	// Most resources have Delete functions. There are rare situations
-	// where you might not need a delete:
-	// a. The AWS API does not provide a way to delete the resource
-	// b. The point of your resource is to perform an action (e.g., reboot a
-	//    server) and deleting serves no purpose.
-	//
-	// The Delete function should do the following things. Make sure there
-	// is a good reason if you don't do one of these.
-	//
-	// 1. Get a client connection to the relevant service
-	// 2. Populate a delete input structure
-	// 3. Call the AWS delete function
-	// 4. Use a waiter to wait for delete to complete
-	// 5. Return nil
+func (m *entitlement) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	conn := m.meta.MediaConnectConn
 
-	// TIP: -- 1. Get a client connection to the relevant service
-	conn := meta.(*conns.AWSClient).MediaConnectConn
+	var state resourceEntitlementData
+	diags := req.State.Get(ctx, &state)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
-	// TIP: -- 2. Populate a delete input structure
-	log.Printf("[INFO] Deleting MediaConnect Entitlement %s", d.Id())
+	programName, multiplexId, err := ParseEntitlementID(state.ID.Value)
 
-	// TIP: -- 3. Call the AWS delete function
-	_, err := conn.DeleteEntitlement(ctx, &mediaconnect.DeleteEntitlementInput{
-		Id: aws.String(d.Id()),
+	if err != nil {
+		resp.Diagnostics.AddError(
+			create.ProblemStandardMessage(names.MediaConnect, create.ErrActionDeleting, ResNameEntitlement, state.ProgramName.String(), nil),
+			err.Error(),
+		)
+		return
+	}
+
+	_, err = conn.DeleteEntitlement(ctx, &mediaconnect.DeleteEntitlementInput{
+		MultiplexId: aws.String(multiplexId),
+		ProgramName: aws.String(programName),
 	})
 
-	// TIP: On rare occassions, the API returns a not found error after deleting a
-	// resource. If that happens, we don't want it to show up as an error.
 	if err != nil {
-		var nfe *types.ResourceNotFoundException
-		if errors.As(err, &nfe) {
-			return nil
+		resp.Diagnostics.AddError(
+			create.ProblemStandardMessage(names.MediaConnect, create.ErrActionDeleting, ResNameEntitlement, state.ProgramName.String(), nil),
+			err.Error(),
+		)
+		return
+	}
+
+	resp.State.RemoveResource(ctx)
+}
+
+func (m *entitlement) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+func (m *entitlement) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var data resourceEntitlementData
+
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	mps := make([]entitlementSettings, 1)
+	resp.Diagnostics.Append(data.EntitlementSettings.ElementsAs(ctx, &mps, false)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if len(mps[0].VideoSettings.Elems) > 0 || !mps[0].VideoSettings.IsNull() {
+		vs := make([]videoSettings, 1)
+		resp.Diagnostics.Append(mps[0].VideoSettings.ElementsAs(ctx, &vs, false)...)
+		if resp.Diagnostics.HasError() {
+			return
 		}
 
-		return create.DiagError(names.MediaConnect, create.ErrActionDeleting, ResNameEntitlement, d.Id(), err)
-	}
+		statMuxSet := len(vs[0].StatmuxSettings.Elems) > 0
+		stateMuxSet := len(vs[0].StatemuxSettings.Elems) > 0
 
-	// TIP: -- 4. Use a waiter to wait for delete to complete
-	if _, err := waitEntitlementDeleted(ctx, conn, d.Id(), d.Timeout(schema.TimeoutDelete)); err != nil {
-		return create.DiagError(names.MediaConnect, create.ErrActionWaitingForDeletion, ResNameEntitlement, d.Id(), err)
-	}
-
-	// TIP: -- 5. Return nil
-	return nil
-}
-
-// TIP: ==== STATUS CONSTANTS ====
-// Create constants for states and statuses if the service does not
-// already have suitable constants. We prefer that you use the constants
-// provided in the service if available (e.g., amp.WorkspaceStatusCodeActive).
-const (
-	statusChangePending = "Pending"
-	statusDeleting      = "Deleting"
-	statusNormal        = "Normal"
-	statusUpdated       = "Updated"
-)
-
-// TIP: ==== WAITERS ====
-// Some resources of some services have waiters provided by the AWS API.
-// Unless they do not work properly, use them rather than defining new ones
-// here.
-//
-// Sometimes we define the wait, status, and find functions in separate
-// files, wait.go, status.go, and find.go. Follow the pattern set out in the
-// service and define these where it makes the most sense.
-//
-// If these functions are used in the _test.go file, they will need to be
-// exported (i.e., capitalized).
-//
-// You will need to adjust the parameters and names to fit the service.
-
-func waitEntitlementCreated(ctx context.Context, conn *mediaconnect.Client, id string, timeout time.Duration) (*mediaconnect.Entitlement, error) {
-	stateConf := &resource.StateChangeConf{
-		Pending:                   []string{},
-		Target:                    []string{statusNormal},
-		Refresh:                   statusEntitlement(ctx, conn, id),
-		Timeout:                   timeout,
-		NotFoundChecks:            20,
-		ContinuousTargetOccurence: 2,
-	}
-
-	outputRaw, err := stateConf.WaitForStateContext(ctx)
-	if out, ok := outputRaw.(*mediaconnect.Entitlement); ok {
-		return out, err
-	}
-
-	return nil, err
-}
-
-// TIP: It is easier to determine whether a resource is updated for some
-// resources than others. The best case is a status flag that tells you when
-// the update has been fully realized. Other times, you can check to see if a
-// key resource argument is updated to a new value or not.
-
-func waitEntitlementUpdated(ctx context.Context, conn *mediaconnect.Client, id string, timeout time.Duration) (*mediaconnect.Entitlement, error) {
-	stateConf := &resource.StateChangeConf{
-		Pending:                   []string{statusChangePending},
-		Target:                    []string{statusUpdated},
-		Refresh:                   statusEntitlement(ctx, conn, id),
-		Timeout:                   timeout,
-		NotFoundChecks:            20,
-		ContinuousTargetOccurence: 2,
-	}
-
-	outputRaw, err := stateConf.WaitForStateContext(ctx)
-	if out, ok := outputRaw.(*mediaconnect.Entitlement); ok {
-		return out, err
-	}
-
-	return nil, err
-}
-
-// TIP: A deleted waiter is almost like a backwards created waiter. There may
-// be additional pending states, however.
-
-func waitEntitlementDeleted(ctx context.Context, conn *mediaconnect.Client, id string, timeout time.Duration) (*mediaconnect.Entitlement, error) {
-	stateConf := &resource.StateChangeConf{
-		Pending: []string{statusDeleting, statusNormal},
-		Target:  []string{},
-		Refresh: statusEntitlement(ctx, conn, id),
-		Timeout: timeout,
-	}
-
-	outputRaw, err := stateConf.WaitForStateContext(ctx)
-	if out, ok := outputRaw.(*mediaconnect.Entitlement); ok {
-		return out, err
-	}
-
-	return nil, err
-}
-
-// TIP: ==== STATUS ====
-// The status function can return an actual status when that field is
-// available from the API (e.g., out.Status). Otherwise, you can use custom
-// statuses to communicate the states of the resource.
-//
-// Waiters consume the values returned by status functions. Design status so
-// that it can be reused by a create, update, and delete waiter, if possible.
-
-func statusEntitlement(ctx context.Context, conn *mediaconnect.Client, id string) resource.StateRefreshFunc {
-	return func() (interface{}, string, error) {
-		out, err := findEntitlementByID(ctx, conn, id)
-		if tfresource.NotFound(err) {
-			return nil, "", nil
+		if statMuxSet && stateMuxSet {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("entitlement_settings").AtListIndex(0).AtName("video_settings").AtListIndex(0).AtName("statmux_settings"),
+				"Conflicting Attribute Configuration",
+				"Attribute statmux_settings cannot be configured with statemux_settings.",
+			)
 		}
-
-		if err != nil {
-			return nil, "", err
-		}
-
-		return out, aws.ToString(out.Status), nil
 	}
 }
 
-// TIP: ==== FINDERS ====
-// The find function is not strictly necessary. You could do the API
-// request from the status function. However, we have found that find often
-// comes in handy in other places besides the status function. As a result, it
-// is good practice to define it separately.
-
-func findEntitlementByID(ctx context.Context, conn *mediaconnect.Client, id string) (*mediaconnect.Entitlement, error) {
-	in := &mediaconnect.GetEntitlementInput{
-		Id: aws.String(id),
+func FindEntitlementByID(ctx context.Context, conn *mediaconnect.Client, multiplexId, programName string) (*mediaconnect.DescribeEntitlementOutput, error) {
+	in := &mediaconnect.DescribeEntitlementInput{
+		MultiplexId: aws.String(multiplexId),
+		ProgramName: aws.String(programName),
 	}
-	out, err := conn.GetEntitlement(ctx, in)
+	out, err := conn.DescribeEntitlement(ctx, in)
 	if err != nil {
-		var nfe *types.ResourceNotFoundException
+		var nfe *mltypes.NotFoundException
 		if errors.As(err, &nfe) {
-			return nil, &resource.NotFoundError{
+			return nil, &resourceHelper.NotFoundError{
 				LastError:   err,
 				LastRequest: in,
 			}
@@ -604,130 +444,278 @@ func findEntitlementByID(ctx context.Context, conn *mediaconnect.Client, id stri
 		return nil, err
 	}
 
-	if out == nil || out.Entitlement == nil {
+	if out == nil {
 		return nil, tfresource.NewEmptyResultError(in)
 	}
 
-	return out.Entitlement, nil
+	return out, nil
 }
 
-// TIP: ==== FLEX ====
-// Flatteners and expanders ("flex" functions) help handle complex data
-// types. Flatteners take an API data type and return something you can use in
-// a d.Set() call. In other words, flatteners translate from AWS -> Terraform.
-//
-// On the other hand, expanders take a Terraform data structure and return
-// something that you can send to the AWS API. In other words, expanders
-// translate from Terraform -> AWS.
-//
-// See more:
-// https://hashicorp.github.io/terraform-provider-aws/data-handling-and-conversion/
-func flattenComplexArgument(apiObject *mediaconnect.ComplexArgument) map[string]interface{} {
-	if apiObject == nil {
-		return nil
+func expandEntitlementEncryption(ctx context.Context, apiObjectList []encryption) (*mctypes.Encryption, diag.Diagnostics) {
+	if len(apiObjectList) == 0 {
+		return nil, nil
 	}
+	apiObject := apiObjectList[0]
 
-	m := map[string]interface{}{}
-
-	if v := apiObject.SubFieldOne; v != nil {
-		m["sub_field_one"] = aws.ToString(v)
-	}
-
-	if v := apiObject.SubFieldTwo; v != nil {
-		m["sub_field_two"] = aws.ToString(v)
-	}
-
-	return m
+	e := &mctypes.Encryption{}
+	return e, nil
 }
 
-// TIP: Often the AWS API will return a slice of structures in response to a
-// request for information. Sometimes you will have set criteria (e.g., the ID)
-// that means you'll get back a one-length slice. This plural function works
-// brilliantly for that situation too.
-func flattenComplexArguments(apiObjects []*mediaconnect.ComplexArgument) []interface{} {
-	if len(apiObjects) == 0 {
-		return nil
+func expandEntitlementSettings(ctx context.Context, mps []entitlementSettings) (*mltypes.EntitlementSettings, bool, diag.Diagnostics) {
+	if len(mps) == 0 {
+		return nil, false, nil
 	}
 
-	var l []interface{}
+	var stateMuxIsNull bool
+	data := mps[0]
 
-	for _, apiObject := range apiObjects {
-		if apiObject == nil {
-			continue
+	l := &mltypes.EntitlementSettings{
+		ProgramNumber:            int32(data.ProgramNumber.Value),
+		PreferredChannelPipeline: mltypes.PreferredChannelPipeline(data.PreferredChannelPipeline.Value),
+	}
+
+	if len(data.ServiceDescriptor.Elems) > 0 && !data.ServiceDescriptor.IsNull() {
+		sd := make([]serviceDescriptor, 1)
+		err := data.ServiceDescriptor.ElementsAs(ctx, &sd, false)
+		if err.HasError() {
+			return nil, false, err
 		}
 
-		l = append(l, flattenComplexArgument(apiObject))
+		l.ServiceDescriptor = &mltypes.EntitlementServiceDescriptor{
+			ProviderName: aws.String(sd[0].ProviderName.Value),
+			ServiceName:  aws.String(sd[0].ServiceName.Value),
+		}
 	}
 
-	return l
-}
-
-// TIP: Remember, as mentioned above, expanders take a Terraform data structure
-// and return something that you can send to the AWS API. In other words,
-// expanders translate from Terraform -> AWS.
-//
-// See more:
-// https://hashicorp.github.io/terraform-provider-aws/data-handling-and-conversion/
-func expandComplexArgument(tfMap map[string]interface{}) *mediaconnect.ComplexArgument {
-	if tfMap == nil {
-		return nil
-	}
-
-	a := &mediaconnect.ComplexArgument{}
-
-	if v, ok := tfMap["sub_field_one"].(string); ok && v != "" {
-		a.SubFieldOne = aws.String(v)
-	}
-
-	if v, ok := tfMap["sub_field_two"].(string); ok && v != "" {
-		a.SubFieldTwo = aws.String(v)
-	}
-
-	return a
-}
-
-// TIP: Even when you have a list with max length of 1, this plural function
-// works brilliantly. However, if the AWS API takes a structure rather than a
-// slice of structures, you will not need it.
-func expandComplexArguments(tfList []interface{}) []*mediaconnect.ComplexArgument {
-	// TIP: The AWS API can be picky about whether you send a nil or zero-
-	// length for an argument that should be cleared. For example, in some
-	// cases, if you send a nil value, the AWS API interprets that as "make no
-	// changes" when what you want to say is "remove everything." Sometimes
-	// using a zero-length list will cause an error.
-	//
-	// As a result, here are two options. Usually, option 1, nil, will work as
-	// expected, clearing the field. But, test going from something to nothing
-	// to make sure it works. If not, try the second option.
-
-	// TIP: Option 1: Returning nil for zero-length list
-	if len(tfList) == 0 {
-		return nil
-	}
-
-	var s []*mediaconnect.ComplexArgument
-
-	// TIP: Option 2: Return zero-length list for zero-length list. If option 1 does
-	// not work, after testing going from something to nothing (if that is
-	// possible), uncomment out the next line and remove option 1.
-	//
-	// s := make([]*mediaconnect.ComplexArgument, 0)
-
-	for _, r := range tfList {
-		m, ok := r.(map[string]interface{})
-
-		if !ok {
-			continue
+	if len(data.VideoSettings.Elems) > 0 && !data.VideoSettings.IsNull() {
+		vs := make([]videoSettings, 1)
+		err := data.VideoSettings.ElementsAs(ctx, &vs, false)
+		if err.HasError() {
+			return nil, false, err
 		}
 
-		a := expandComplexArgument(m)
-
-		if a == nil {
-			continue
+		l.VideoSettings = &mltypes.MultiplexVideoSettings{
+			ConstantBitrate: int32(vs[0].ConstantBitrate.Value),
 		}
 
-		s = append(s, a)
+		// Deprecated: will be removed in the next major version
+		if len(vs[0].StatemuxSettings.Elems) > 0 && !vs[0].StatemuxSettings.IsNull() {
+			sms := make([]statmuxSettings, 1)
+			err := vs[0].StatemuxSettings.ElementsAs(ctx, &sms, false)
+			if err.HasError() {
+				return nil, false, err
+			}
+
+			l.VideoSettings.StatmuxSettings = &mltypes.MultiplexStatmuxVideoSettings{
+				MinimumBitrate: int32(sms[0].MinimumBitrate.Value),
+				MaximumBitrate: int32(sms[0].MaximumBitrate.Value),
+				Priority:       int32(sms[0].Priority.Value),
+			}
+		}
+
+		if len(vs[0].StatmuxSettings.Elems) > 0 && !vs[0].StatmuxSettings.IsNull() {
+			stateMuxIsNull = true
+			sms := make([]statmuxSettings, 1)
+			err := vs[0].StatmuxSettings.ElementsAs(ctx, &sms, false)
+			if err.HasError() {
+				return nil, false, err
+			}
+
+			l.VideoSettings.StatmuxSettings = &mltypes.MultiplexStatmuxVideoSettings{
+				MinimumBitrate: int32(sms[0].MinimumBitrate.Value),
+				MaximumBitrate: int32(sms[0].MaximumBitrate.Value),
+				Priority:       int32(sms[0].Priority.Value),
+			}
+		}
 	}
 
+	return l, stateMuxIsNull, nil
+}
+
+var (
+	statmuxAttrs = map[string]attr.Type{
+		"minimum_bitrate": types.Int64Type,
+		"maximum_bitrate": types.Int64Type,
+		"priority":        types.Int64Type,
+	}
+
+	videoSettingsAttrs = map[string]attr.Type{
+		"constant_bitrate":  types.Int64Type,
+		"statemux_settings": types.ListType{ElemType: types.ObjectType{AttrTypes: statmuxAttrs}},
+		"statmux_settings":  types.ListType{ElemType: types.ObjectType{AttrTypes: statmuxAttrs}},
+	}
+
+	serviceDescriptorAttrs = map[string]attr.Type{
+		"provider_name": types.StringType,
+		"service_name":  types.StringType,
+	}
+
+	entitlementSettingsAttrs = map[string]attr.Type{
+		"program_number":             types.Int64Type,
+		"preferred_channel_pipeline": types.StringType,
+		"service_descriptor":         types.ListType{ElemType: types.ObjectType{AttrTypes: serviceDescriptorAttrs}},
+		"video_settings":             types.ListType{ElemType: types.ObjectType{AttrTypes: videoSettingsAttrs}},
+	}
+)
+
+func flattenEntitlementSettings(mps *mltypes.EntitlementSettings, stateMuxIsNull bool) types.List {
+	elemType := types.ObjectType{AttrTypes: entitlementSettingsAttrs}
+
+	vals := types.Object{AttrTypes: entitlementSettingsAttrs}
+	attrs := map[string]attr.Value{}
+
+	if mps == nil {
+		return types.List{ElemType: elemType, Elems: []attr.Value{}}
+	}
+
+	attrs["program_number"] = types.Int64{Value: int64(mps.ProgramNumber)}
+	attrs["preferred_channel_pipeline"] = types.String{Value: string(mps.PreferredChannelPipeline)}
+	attrs["service_descriptor"] = flattenServiceDescriptor(mps.ServiceDescriptor)
+	attrs["video_settings"] = flattenVideoSettings(mps.VideoSettings, stateMuxIsNull)
+
+	vals.Attrs = attrs
+
+	return types.List{
+		Elems:    []attr.Value{vals},
+		ElemType: elemType,
+	}
+}
+
+func flattenServiceDescriptor(sd *mltypes.EntitlementServiceDescriptor) types.List {
+	elemType := types.ObjectType{AttrTypes: serviceDescriptorAttrs}
+
+	vals := types.Object{AttrTypes: serviceDescriptorAttrs}
+	attrs := map[string]attr.Value{}
+
+	if sd == nil {
+		return types.List{ElemType: elemType, Elems: []attr.Value{}}
+	}
+
+	attrs["provider_name"] = types.String{Value: aws.ToString(sd.ProviderName)}
+	attrs["service_name"] = types.String{Value: aws.ToString(sd.ServiceName)}
+
+	vals.Attrs = attrs
+
+	return types.List{
+		Elems:    []attr.Value{vals},
+		ElemType: elemType,
+	}
+}
+
+func flattenStatMuxSettings(mps *mltypes.MultiplexStatmuxVideoSettings) types.List {
+	elemType := types.ObjectType{AttrTypes: statmuxAttrs}
+
+	vals := types.Object{AttrTypes: statmuxAttrs}
+
+	if mps == nil {
+		return types.List{ElemType: elemType, Elems: []attr.Value{}}
+	}
+
+	attrs := map[string]attr.Value{}
+	attrs["minimum_bitrate"] = types.Int64{Value: int64(mps.MinimumBitrate)}
+	attrs["maximum_bitrate"] = types.Int64{Value: int64(mps.MaximumBitrate)}
+	attrs["priority"] = types.Int64{Value: int64(mps.Priority)}
+
+	vals.Attrs = attrs
+
+	return types.List{
+		Elems:    []attr.Value{vals},
+		ElemType: elemType,
+	}
+}
+
+func flattenVideoSettings(mps *mltypes.MultiplexVideoSettings, stateMuxIsNull bool) types.List {
+	elemType := types.ObjectType{AttrTypes: videoSettingsAttrs}
+
+	vals := types.Object{AttrTypes: videoSettingsAttrs}
+	attrs := map[string]attr.Value{}
+
+	if mps == nil {
+		return types.List{ElemType: elemType, Elems: []attr.Value{}}
+	}
+
+	attrs["constant_bitrate"] = types.Int64{Value: int64(mps.ConstantBitrate)}
+
+	if stateMuxIsNull {
+		attrs["statmux_settings"] = flattenStatMuxSettings(mps.StatmuxSettings)
+		attrs["statemux_settings"] = types.List{
+			Elems:    []attr.Value{},
+			ElemType: types.ObjectType{AttrTypes: statmuxAttrs},
+		}
+	} else {
+		attrs["statmux_settings"] = types.List{
+			Elems:    []attr.Value{},
+			ElemType: types.ObjectType{AttrTypes: statmuxAttrs},
+		}
+		attrs["statemux_settings"] = flattenStatMuxSettings(mps.StatmuxSettings)
+	}
+
+	vals.Attrs = attrs
+
+	return types.List{
+		Elems:    []attr.Value{vals},
+		ElemType: elemType,
+	}
+}
+
+func ParseEntitlementID(id string) (programName string, multiplexId string, err error) {
+	idParts := strings.Split(id, "/")
+
+	if len(idParts) < 2 || (idParts[0] == "" || idParts[1] == "") {
+		err = errors.New("invalid id")
+		return
+	}
+
+	programName = idParts[0]
+	multiplexId = idParts[1]
+
+	return
+}
+
+type encryption struct {
+	RoleArn                      types.String `tfsdk:"role_arn"`
+	Algorithm                    types.String `tfsdk:"algorithm"`
+	ConstantInitializationVector types.String `tfsdk:"constant_initialization_vector"`
+	DeviceId                     types.String `tfsdk:"device_id"`
+	KeyType                      types.String `tfsdk:"key_type"`
+	Region                       types.String `tfsdk:"region"`
+	ResourceId                   types.String `tfsdk:"resource_id"`
+	SecretArn                    types.String `tfsdk:"secret_arn"`
+	Url                          types.String `tfsdk:"url"`
+}
+
+type resourceEntitlementData struct {
+	ID                               types.String `tfsdk:"id"`
+	DataTransferSubscriberFeePercent types.Int64  `tfsdk:"data_transfer_subscriber_fee_percent"`
+	Description                      types.String `tfsdk:"description"`
+	Encryption                       types.List   `tfsdk:"encryption"`
+	EntitlementArn                   types.String `tfsdk:"entitlement_arn"`
+	EntitlementStatus                types.String `tfsdk:"entitlement_status"`
+	FlowArn                          types.String `tfsdk:"flow_arn"`
+	Name                             types.String `tfsdk:"name"`
+	Subscribers                      types.List   `tfsdk:"subscribers"`
+}
+
+func algorithmsToSlice(a []mctypes.Algorithm) []string {
+	s := make([]string, 0)
+	for _, v := range a {
+		s = append(s, string(v))
+	}
+	return s
+}
+
+func entitlementStatusToSlice(e []mctypes.EntitlementStatus) []string {
+	s := make([]string, 0)
+	for _, v := range e {
+		s = append(s, string(v))
+	}
+	return s
+}
+
+func keyTypeToSlice(k []mctypes.KeyType) []string {
+	s := make([]string, 0)
+	for _, v := range k {
+		s = append(s, string(v))
+	}
 	return s
 }

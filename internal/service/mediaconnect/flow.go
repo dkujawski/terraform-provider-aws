@@ -13,7 +13,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/structure"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	"github.com/hashicorp/terraform-provider-aws/internal/conns"
 	"github.com/hashicorp/terraform-provider-aws/internal/create"
@@ -426,19 +425,19 @@ func resourceFlowCreate(ctx context.Context, d *schema.ResourceData, meta interf
 	}
 
 	if v, ok := d.GetOk("maintenance"); ok && len(v.([]interface{})) > 0 {
-		in.Maintenance = expandMaintenance(v.([]interface{}))
+		in.Maintenance = expandAddMaintenance(v.([]interface{}))
 	}
 
 	if v, ok := d.GetOk("mediastream"); ok && len(v.([]interface{})) > 0 {
-		in.MediaStreams = expandMediaStreams(v.([]interface{}))
+		in.MediaStreams = expandAddMediaStreamRequest(v.([]interface{}))
 	}
 
 	if v, ok := d.GetOk("source"); ok && len(v.([]interface{})) > 0 {
-		in.Sources = expandSources(v.([]interface{}))
+		in.Sources = expandSetSourceRequests(v.([]interface{}))
 	}
 
 	if v, ok := d.GetOk("source_failover_config"); ok && len(v.([]interface{})) > 0 {
-		in.SourceFailoverConfig = expandSourceFailoverConfig(v.([]interface{}))
+		in.SourceFailoverConfig = expandFailoverConfig(v.([]interface{}))
 	}
 
 	if v, ok := d.GetOk("vpc_interface"); ok && len(v.([]interface{})) > 0 {
@@ -483,33 +482,54 @@ func resourceFlowRead(ctx context.Context, d *schema.ResourceData, meta interfac
 
 	d.Set("maintenance", flattenMaintenance(out.Maintenance))
 	d.Set("mediastream", flattenMediastream(out.MediaStreams))
-	d.Set("source", flattenSource(out.Source))
-	d.Set("source_failover_config", flattenSourceFailoverConfig(out.SourceFailoverConfig))
+	if len(out.Sources) > 0 {
+		d.Set("source", flattenSource(out.Sources))
+	} else {
+		d.Set("source", flattenSource([]types.Source{*out.Source}))
+	}
+	d.Set("source_failover_config", flattenFailoverConfig(out.SourceFailoverConfig))
 	d.Set("vpc_interface", flattenVpcInterface(out.VpcInterfaces))
 
 	return nil
 }
 
 func resourceFlowUpdate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	update, err := maybeUpdateFlow(d, meta)
-	if err != nil {
-		return err
+	if d.HasChangesExcept("tags", "tags_all") {
+		var hasUpdate bool
+		hasFlowUpdate, err := maybeUpdateFlow(ctx, d, meta)
+		if err != nil {
+			return err
+		}
+		hasUpdate = hasFlowUpdate
+		hasFlowSourceUpdate, err := maybeUpdateFlowSource(ctx, d, meta)
+		if err != nil {
+			return err
+		}
+		if !hasUpdate {
+			hasUpdate = hasFlowSourceUpdate
+		}
+		hasFlowMediaStreamUpdate, err := maybeUpdateFlowMediaStream(ctx, d, meta)
+		if err != nil {
+			return err
+		}
+		if !hasUpdate {
+			hasUpdate = hasFlowMediaStreamUpdate
+		}
+		if !hasUpdate {
+			return nil
+		}
 	}
-	update, err = maybeUpdateFlowSource(d, meta)
-	if err != nil {
-		return err
-	}
-	update, err = maybeUpdateFlowTags(d, meta)
-	if err != nil {
-		return err
-	}
-	if !update {
-		return nil
+	if d.HasChange("tags_all") {
+		conn := meta.(*conns.AWSClient).MediaConnectConn
+		o, n := d.GetChange("tags_all")
+		if err := UpdateTags(ctx, conn, d.Get("arn").(string), o, n); err != nil {
+			return create.DiagError(names.MediaLive, create.ErrActionUpdating, ResNameFlow, d.Id(), err)
+		}
 	}
 	return resourceFlowRead(ctx, d, meta)
 }
 
-func maybeUpdateFlow(d *schema.ResourceData, meta interface{}) (bool, diag.Diagnostics) {
+func maybeUpdateFlow(ctx context.Context, d *schema.ResourceData, meta interface{}) (bool, diag.Diagnostics) {
 	conn := meta.(*conns.AWSClient).MediaConnectConn
 	update := false
 
@@ -518,12 +538,12 @@ func maybeUpdateFlow(d *schema.ResourceData, meta interface{}) (bool, diag.Diagn
 	}
 
 	if d.HasChanges("maintenance") {
-		in.Maintenance = expandMaintenance(d.Get("maintenance").(*schema.Set).List())
+		in.Maintenance = expandUpdateMaintenance(d.Get("maintenance").(*schema.Set).List())
 		update = true
 	}
 
 	if d.HasChanges("source_failover_config") {
-		in.SourceFailoverConfig = expandSourceFailoverConfig(d.Get("source_failover_config").(*schema.Set).List())
+		in.SourceFailoverConfig = expandUpdateFailoverConfig(d.Get("source_failover_config").(*schema.Set).List())
 		update = true
 	}
 
@@ -536,41 +556,49 @@ func maybeUpdateFlow(d *schema.ResourceData, meta interface{}) (bool, diag.Diagn
 	if err != nil {
 		return update, create.DiagError(names.MediaConnect, create.ErrActionUpdating, ResNameFlow, d.Id(), err)
 	}
-
-	if _, err := waitFlowUpdated(ctx, conn, aws.ToString(out.OperationId), d.Timeout(schema.TimeoutUpdate)); err != nil {
+	if _, err := waitFlowUpdated(ctx, conn, aws.ToString(out.Flow.FlowArn), d.Timeout(schema.TimeoutUpdate)); err != nil {
 		return update, create.DiagError(names.MediaConnect, create.ErrActionWaitingForUpdate, ResNameFlow, d.Id(), err)
 	}
 	return update, nil
 }
 
-func maybeUpdateFlowSource(d *schema.ResourceData, meta interface{}) (bool, diag.Diagnostics) {
+func maybeUpdateFlowMediaStream(ctx context.Context, d *schema.ResourceData, meta interface{}) (bool, diag.Diagnostics) {
 	conn := meta.(*conns.AWSClient).MediaConnectConn
 	update := false
 
-	if d.HasChanges("source") {
-		sources := expandSources(d.Get("source").(*schema.Set).Set())
-		for source := range(sources) {
-			in := &mediaconnect.UpdateFlowSourceInput{
-				FlowArn: aws.String(d.Id()),
+	if d.HasChange("mediastream") {
+		mediastreams := expandUpdateMediaStreamInput(d.Id(), d.Get("mediastream").(*schema.Set).List())
+		for _, mediastream := range mediastreams {
+			log.Printf("[DEBUG] Updating MediaConnect Flow (%s): %#v", d.Id(), mediastream.MediaStreamName)
+			out, err := conn.UpdateFlowMediaStream(ctx, mediastream)
+			if err != nil {
+				return update, create.DiagError(names.MediaConnect, create.ErrActionUpdating, ResNameFlow, d.Id(), err)
 			}
-
-
+			if _, err := waitFlowUpdated(ctx, conn, aws.ToString(out.FlowArn), d.Timeout(schema.TimeoutUpdate)); err != nil {
+				return update, create.DiagError(names.MediaConnect, create.ErrActionWaitingForUpdate, ResNameFlow, d.Id(), err)
+			}
+			update = true
 		}
-		update = true
 	}
+	return update, nil
+}
+func maybeUpdateFlowSource(ctx context.Context, d *schema.ResourceData, meta interface{}) (bool, diag.Diagnostics) {
+	conn := meta.(*conns.AWSClient).MediaConnectConn
+	update := false
 
-	if !update {
-		return update, nil
-	}
-
-	log.Printf("[DEBUG] Updating MediaConnect Flow (%s): %#v", d.Id(), in)
-	out, err := conn.UpdateFlow(ctx, in)
-	if err != nil {
-		return update, create.DiagError(names.MediaConnect, create.ErrActionUpdating, ResNameFlow, d.Id(), err)
-	}
-
-	if _, err := waitFlowUpdated(ctx, conn, aws.ToString(out.OperationId), d.Timeout(schema.TimeoutUpdate)); err != nil {
-		return update, create.DiagError(names.MediaConnect, create.ErrActionWaitingForUpdate, ResNameFlow, d.Id(), err)
+	if d.HasChange("source") {
+		sources := expandSourceInputs(d.Id(), d.Get("source").(*schema.Set).List())
+		for _, source := range sources {
+			log.Printf("[DEBUG] Updating MediaConnect Flow (%s): %#v", d.Id(), source.SourceArn)
+			out, err := conn.UpdateFlowSource(ctx, source)
+			if err != nil {
+				return update, create.DiagError(names.MediaConnect, create.ErrActionUpdating, ResNameFlow, d.Id(), err)
+			}
+			if _, err := waitFlowUpdated(ctx, conn, aws.ToString(out.FlowArn), d.Timeout(schema.TimeoutUpdate)); err != nil {
+				return update, create.DiagError(names.MediaConnect, create.ErrActionWaitingForUpdate, ResNameFlow, d.Id(), err)
+			}
+			update = true
+		}
 	}
 	return update, nil
 }
@@ -761,6 +789,96 @@ func findFlowByID(ctx context.Context, conn *mediaconnect.Client, id string) (*t
 	return out.Flow, nil
 }
 
+func flattenEncryption(apiObject *types.Encryption) []encryption {
+	if apiObject == nil {
+		return nil
+	}
+
+	e := encryption{RoleArn: aws.ToString(apiObject.RoleArn)}
+
+	if v := apiObject.ConstantInitializationVector; v != nil {
+		e.ConstantInitializationVector = aws.ToString(v)
+	}
+	if v := apiObject.DeviceId; v != nil {
+		e.DeviceId = aws.ToString(v)
+	}
+	if v := apiObject.Region; v != nil {
+		e.Region = aws.ToString(v)
+	}
+	if v := apiObject.ResourceId; v != nil {
+		e.ResourceId = aws.ToString(v)
+	}
+	if v := apiObject.SecretArn; v != nil {
+		e.SecretArn = aws.ToString(v)
+	}
+	if v := apiObject.Url; v != nil {
+		e.Url = aws.ToString(v)
+	}
+
+	e.Algorithm = flattenAlgorithm(v)
+	e.KeyType = flattenKeyType(v)
+
+	return []encryption{e}
+}
+
+func flattenFailoverConfig(apiObject *types.FailoverConfig) []failoverConfig {
+	if apiObject == nil {
+		return nil
+	}
+	fc := failoverConfig{}
+	return []failoverConfig{fc}
+}
+
+func flattenFmtp(apiObject *types.Fmtp) []fmtp {
+	if apiObject == nil {
+		return nil
+	}
+	f := fmtp{
+		ChannelOrder:   aws.ToString(apiObject.ChannelOrder),
+		Colorimetry:    apiObject.Colorimetry,
+		ExactFramerate: aws.ToString(apiObject.ExactFramerate),
+		Par:            aws.ToString(apiObject.Par),
+		Range:          apiObject.Range,
+		ScanMode:       apiObject.ScanMode,
+		Tcs:            apiObject.Tcs,
+	}
+	return []fmtp{f}
+}
+
+func flattenMediastream(apiObjects []types.MediaStream) []mediaStream {
+	if len(apiObjects) == 0 {
+		return nil
+	}
+	var tfList []mediaStream
+	for _, apiObject := range apiObjects {
+		if apiObject == (types.MediaStream{}) {
+			continue
+		}
+		ms := mediaStream{
+			Fmt:             apiObject.Fmt,
+			MediaStreamId:   apiObject.MediaStreamId,
+			MediaStreamName: tftypes.String{Value: aws.ToString(apiObject.MediaStreamName)},
+			MediaStreamType: apiObject.MediaStreamType,
+			Attributes:      flattenMediaStreamAttributes(apiObject.Attributes),
+		}
+		tfList = append(tfList, ms)
+	}
+	return tfList
+}
+
+func flattenMediaStreamAttributes(apiObject *types.MediaStreamAttributes) []mediaStreamAttributes {
+	if apiObject == nil {
+		return nil
+	}
+	attrs := mediaStreamAttributes{
+		Fmtp: flattenFmtp(apiObject.Fmtp),
+	}
+	if v := apiObject.Lang; v != nil {
+		attrs.Lang = tftypes.String{Value: aws.ToString(v)}
+	}
+	return []mediaStreamAttributes{attrs}
+}
+
 func flattenMaintenance(apiObject *types.Maintenance) map[string]interface{} {
 	if apiObject == nil {
 		return nil
@@ -787,83 +905,59 @@ func flattenMaintenance(apiObject *types.Maintenance) map[string]interface{} {
 	return m
 }
 
-func flattenFmtp(apiObject *types.Fmtp) []fmtp {
-	if apiObject == nil {
-		return nil
-	}
-	f := fmtp{
-		ChannelOrder:   tftypes.String{Value: aws.ToString(apiObject.ChannelOrder)},
-		Colorimetry:    apiObject.Colorimetry,
-		ExactFramerate: tftypes.String{Value: aws.ToString(apiObject.ExactFramerate)},
-		Par:            tftypes.String{Value: aws.ToString(apiObject.Par)},
-		Range:          apiObject.Range,
-		ScanMode:       apiObject.ScanMode,
-		Tcs:            apiObject.Tcs,
-	}
-	return []fmtp{f}
-}
-
-func flattenMediaStreamAttributes(apiObject *types.MediaStreamAttributes) []mediaStreamAttributes {
-	if apiObject == nil {
-		return nil
-	}
-	attrs := mediaStreamAttributes{
-		Fmtp: flattenFmtp(apiObject.Fmtp),
-	}
-	if v := apiObject.Lang; v != nil {
-		attrs.Lang = tftypes.String{Value: aws.ToString(v)}
-	}
-	return []mediaStreamAttributes{attrs}
-}
-
-func flattenMediastream(apiObjects []types.MediaStream) []mediaStream {
-	if len(apiObjects) == 0 {
-		return nil
-	}
-	var tfList []mediaStream
-	for _, apiObject := range apiObjects {
-		if apiObject == (types.MediaStream{}) {
-			continue
-		}
-		ms := mediaStream{
-			Fmt:             apiObject.Fmt,
-			MediaStreamId:   apiObject.MediaStreamId,
-			MediaStreamName: tftypes.String{Value: aws.ToString(apiObject.MediaStreamName)},
-			MediaStreamType: apiObject.MediaStreamType,
-			Attributes:      flattenMediaStreamAttributes(apiObject.Attributes),
-		}
-		tfList = append(tfList, ms)
-	}
-	return tfList
-}
-
 func flattenSource(apiObjects []types.Source) []source {
-
-}
-
-// TIP: Often the AWS API will return a slice of structures in response to a
-// request for information. Sometimes you will have set criteria (e.g., the ID)
-// that means you'll get back a one-length slice. This plural function works
-// brilliantly for that situation too.
-func flattenComplexArguments(apiObjects []*mediaconnect.ComplexArgument) []interface{} {
 	if len(apiObjects) == 0 {
 		return nil
 	}
-
-	var l []interface{}
-
+	var tfList []source
 	for _, apiObject := range apiObjects {
-		if apiObject == nil {
-			continue
+		// types.Source{} is a complex object that contains more complex objects
+		// apiObject cannot be compared to a literal types.Source{}
+		/*
+			if apiObject == (types.Source{}) {
+				continue
+			}
+		*/
+		s := source{
+			Name:                             aws.ToString(apiObject.Name),
+			SourceArn:                        aws.ToString(apiObject.SourceArn),
+			DataTransferSubscriberFeePercent: apiObject.DataTransferSubscriberFeePercent,
+			IngestPort:                       apiObject.IngestPort,
+			SenderControlPort:                apiObject.SenderControlPort,
+		}
+		if v := apiObject.Description; v != nil {
+			s.Description = aws.ToString(v)
+		}
+		if v := apiObject.EntitlementArn; v != nil {
+			s.EntitlementArn = aws.ToString(v)
+		}
+		if v := apiObject.IngestIp; v != nil {
+			s.IngestIp = aws.ToString(v)
+		}
+		if v := apiObject.SenderIpAddress; v != nil {
+			s.SenderIpAddress = aws.ToString(v)
+		}
+		if v := apiObject.VpcInterfaceName; v != nil {
+			s.VpcInterfaceName = aws.ToString(v)
+		}
+		if v := apiObject.WhitelistCidr; v != nil {
+			s.WhitelistCidr = aws.ToString(v)
+		}
+		if v := apiObject.Decryption; v != nil {
+			s.Decryption = flattenEncryption(apiObject.Decryption)
+		}
+		if v := apiObject.MediaStreamSourceConfigurations; v != nil {
+			s.MediaStreamSourceConfigurations = flattenMediaStreamSourceConfigurations(apiObject.MediaStreamSourceConfigurations)
+		}
+		if v := apiObject.Transport; v != nil {
+			s.Transport = flattenTransport(apiObject.Transport)
 		}
 
-		l = append(l, flattenComplexArgument(apiObject))
+		tfList = append(tfList, s)
 	}
-
-	return l
 }
 
-func expandMaintenance(tfList []interface{}) *types.AddMaintenance {
+func expandAddMaintenance(tfList []interface{}) *types.AddMaintenance {
 	if len(tfList) == 0 {
 		return nil
 	}
@@ -880,6 +974,58 @@ func expandMaintenance(tfList []interface{}) *types.AddMaintenance {
 	}
 
 	return m
+}
+
+func expandEncryption(tfMap map[string]interface{}) *types.Encryption {
+	e := &types.Encryption{RoleArn: aws.String(tfMap["role_arn"].(string))}
+
+	if val, ok := tfMap["algorithm"]; ok {
+		e.Algorithm = val.(types.Algorithm)
+	}
+	if val, ok := tfMap["constant_initialization_vector"]; ok {
+		e.ConstantInitializationVector = aws.String(val.(string))
+	}
+	if val, ok := tfMap["device_id"]; ok {
+		e.DeviceId = aws.String(val.(string))
+	}
+	if val, ok := tfMap["key_type"]; ok {
+		e.KeyType = val.(types.KeyType)
+	}
+	if val, ok := tfMap["region"]; ok {
+		e.Region = aws.String(val.(string))
+	}
+	if val, ok := tfMap["resource_id"]; ok {
+		e.ResourceId = aws.String(val.(string))
+	}
+	if val, ok := tfMap["secret_arn"]; ok {
+		e.SecretArn = aws.String(val.(string))
+	}
+	if val, ok := tfMap["url"]; ok {
+		e.Url = aws.String(val.(string))
+	}
+
+	return e
+}
+
+func expandFailoverConfig(tfList []interface{}) *types.FailoverConfig {
+	if len(tfList) == 0 {
+		return nil
+	}
+	tfMap := tfList[0].(map[string]interface{})
+	fc := &types.FailoverConfig{}
+	if val, ok := tfMap["failover_mode"]; ok {
+		fc.FailoverMode = val.(types.FailoverMode)
+	}
+	if val, ok := tfMap["recovery_window"]; ok {
+		fc.RecoveryWindow = int32(val.(int))
+	}
+	if val, ok := tfMap["source_priority"]; ok {
+		fc.SourcePriority = expandSourcePriority(val.(map[string]interface{}))
+	}
+	if val, ok := tfMap["state"]; ok {
+		fc.State = val.(types.State)
+	}
+	return fc
 }
 
 func expandFmtp(tfMap map[string]interface{}) *types.FmtpRequest {
@@ -910,6 +1056,34 @@ func expandFmtp(tfMap map[string]interface{}) *types.FmtpRequest {
 	return f
 }
 
+func expandInputConfigurations(tfList []interface{}) []types.InputConfigurationRequest {
+	if len(tfList) == 0 {
+		return nil
+	}
+
+	var icr []types.InputConfigurationRequest
+
+	for _, tfMapRaw := range tfList {
+		tfMap, ok := tfMapRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		i := types.InputConfigurationRequest{
+			InputPort: int32(tfMap["input_port"].(int)),
+			Interface: expandInterfaceRequest(tfMap["interface"].(map[string]interface{})),
+		}
+		icr = append(icr, i)
+	}
+	return icr
+}
+
+func expandInterfaceRequest(tfMap map[string]interface{}) *types.InterfaceRequest {
+	return &types.InterfaceRequest{
+		Name: aws.String(tfMap["name"].(string)),
+	}
+}
+
+// TODO: this should return raw MediaStreamAttribute types
 func expandMediaStreamAttributes(tfMap map[string]interface{}) *types.MediaStreamAttributesRequest {
 	ma := &types.MediaStreamAttributesRequest{}
 
@@ -924,7 +1098,8 @@ func expandMediaStreamAttributes(tfMap map[string]interface{}) *types.MediaStrea
 	return ma
 }
 
-func expandMediaStreams(tfList []interface{}) []types.AddMediaStreamRequest {
+// TODO: this should return raw MediaStream types
+func expandAddMediaStreamRequest(tfList []interface{}) []types.AddMediaStreamRequest {
 	if len(tfList) == 0 {
 		return nil
 	}
@@ -968,32 +1143,7 @@ func expandMediaStreams(tfList []interface{}) []types.AddMediaStreamRequest {
 	return amsr
 }
 
-func expandInterfaceRequest(tfMap map[string]interface{}) *types.InterfaceRequest {
-	return &types.InterfaceRequest{
-		Name: aws.String(tfMap["name"].(string)),
-	}
-}
-
-func expandInputConfigurations(tfList []interface{}) []types.InputConfigurationRequest {
-	if len(tfList) == 0 {
-		return nil
-	}
-
-	var icr []types.InputConfigurationRequest
-
-	for _, tfMapRaw := range tfList {
-		tfMap, ok := tfMapRaw.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		i := types.InputConfigurationRequest{
-			InputPort: int32(tfMap["input_port"].(int)),
-			Interface: expandInterfaceRequest(tfMap["interface"].(map[string]interface{})),
-		}
-		icr = append(icr, i)
-	}
-	return icr
-}
+// TODO: this should return raw MediaStreamSourceConiguration types
 func expandMediaStreamSourceConfigurations(tfList []interface{}) []types.MediaStreamSourceConfigurationRequest {
 	if len(tfList) == 0 {
 		return nil
@@ -1020,38 +1170,7 @@ func expandMediaStreamSourceConfigurations(tfList []interface{}) []types.MediaSt
 	return msscr
 }
 
-func expandEncryption(tfMap map[string]interface{}) *types.Encryption {
-	e := &types.Encryption{RoleArn: aws.String(tfMap["role_arn"].(string))}
-
-	if val, ok := tfMap["algorithm"]; ok {
-		e.Algorithm = val.(types.Algorithm)
-	}
-	if val, ok := tfMap["constant_initialization_vector"]; ok {
-		e.ConstantInitializationVector = aws.String(val.(string))
-	}
-	if val, ok := tfMap["device_id"]; ok {
-		e.DeviceId = aws.String(val.(string))
-	}
-	if val, ok := tfMap["key_type"]; ok {
-		e.KeyType = val.(types.KeyType)
-	}
-	if val, ok := tfMap["region"]; ok {
-		e.Region = aws.String(val.(string))
-	}
-	if val, ok := tfMap["resource_id"]; ok {
-		e.ResourceId = aws.String(val.(string))
-	}
-	if val, ok := tfMap["secret_arn"]; ok {
-		e.SecretArn = aws.String(val.(string))
-	}
-	if val, ok := tfMap["url"]; ok {
-		e.Url = aws.String(val.(string))
-	}
-
-	return e
-}
-
-func expandSources(tfList []interface{}) []types.SetSourceRequest {
+func expandSetSourceRequests(tfList []interface{}) []types.SetSourceRequest {
 	if len(tfList) == 0 {
 		return nil
 	}
@@ -1124,6 +1243,76 @@ func expandSources(tfList []interface{}) []types.SetSourceRequest {
 	}
 	return ssr
 }
+func expandSourceInputs(flowArn string, tfList []interface{}) []*mediaconnect.UpdateFlowSourceInput {
+	if len(tfList) == 0 {
+		return nil
+	}
+
+	var ufsi []*mediaconnect.UpdateFlowSourceInput
+
+	for _, tfMapRaw := range tfList {
+		tfMap, ok := tfMapRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		s := &mediaconnect.UpdateFlowSourceInput{FlowArn: aws.String(flowArn)}
+		if val, ok := tfMap["decryption"]; ok {
+			s.Decryption = expandUpdateEncryption(val.(map[string]interface{}))
+		}
+		if val, ok := tfMap["description"]; ok {
+			s.Description = aws.String(val.(string))
+		}
+		if val, ok := tfMap["entitlement_arn"]; ok {
+			s.EntitlementArn = aws.String(val.(string))
+		}
+		if val, ok := tfMap["ingest_port"]; ok {
+			s.IngestPort = int32(val.(int))
+		}
+		if val, ok := tfMap["max_bitrate"]; ok {
+			s.MaxBitrate = int32(val.(int))
+		}
+		if val, ok := tfMap["max_latency"]; ok {
+			s.MaxLatency = int32(val.(int))
+		}
+		if val, ok := tfMap["max_sync_buffer"]; ok {
+			s.MaxSyncBuffer = int32(val.(int))
+		}
+		if val, ok := tfMap["media_stream_source_configurations"]; ok {
+			s.MediaStreamSourceConfigurations = expandMediaStreamSourceConfigurations(val.([]interface{}))
+		}
+		if val, ok := tfMap["min_latency"]; ok {
+			s.MinLatency = int32(val.(int))
+		}
+		if val, ok := tfMap["protocol"]; ok {
+			s.Protocol = val.(types.Protocol)
+		}
+		if val, ok := tfMap["sender_control_port"]; ok {
+			s.SenderControlPort = int32(val.(int))
+		}
+		if val, ok := tfMap["sender_ip_address"]; ok {
+			s.SenderIpAddress = aws.String(val.(string))
+		}
+		if val, ok := tfMap["source_listener_address"]; ok {
+			s.SourceListenerAddress = aws.String(val.(string))
+		}
+		if val, ok := tfMap["source_listener_port"]; ok {
+			s.SourceListenerPort = int32(val.(int))
+		}
+		if val, ok := tfMap["stream_id"]; ok {
+			s.StreamId = aws.String(val.(string))
+		}
+		if val, ok := tfMap["vpc_interface_name"]; ok {
+			s.VpcInterfaceName = aws.String(val.(string))
+		}
+		if val, ok := tfMap["white_list_cidr"]; ok {
+			s.WhitelistCidr = aws.String(val.(string))
+		}
+
+		ufsi = append(ufsi, s)
+
+	}
+	return ufsi
+}
 
 func expandSourcePriority(tfMap map[string]interface{}) *types.SourcePriority {
 	return &types.SourcePriority{
@@ -1131,12 +1320,43 @@ func expandSourcePriority(tfMap map[string]interface{}) *types.SourcePriority {
 	}
 }
 
-func expandSourceFailoverConfig(tfList []interface{}) *types.FailoverConfig {
+func expandUpdateEncryption(tfMap map[string]interface{}) *types.UpdateEncryption {
+	e := &types.UpdateEncryption{RoleArn: aws.String(tfMap["role_arn"].(string))}
+
+	if val, ok := tfMap["algorithm"]; ok {
+		e.Algorithm = val.(types.Algorithm)
+	}
+	if val, ok := tfMap["constant_initialization_vector"]; ok {
+		e.ConstantInitializationVector = aws.String(val.(string))
+	}
+	if val, ok := tfMap["device_id"]; ok {
+		e.DeviceId = aws.String(val.(string))
+	}
+	if val, ok := tfMap["key_type"]; ok {
+		e.KeyType = val.(types.KeyType)
+	}
+	if val, ok := tfMap["region"]; ok {
+		e.Region = aws.String(val.(string))
+	}
+	if val, ok := tfMap["resource_id"]; ok {
+		e.ResourceId = aws.String(val.(string))
+	}
+	if val, ok := tfMap["secret_arn"]; ok {
+		e.SecretArn = aws.String(val.(string))
+	}
+	if val, ok := tfMap["url"]; ok {
+		e.Url = aws.String(val.(string))
+	}
+
+	return e
+}
+
+func expandUpdateFailoverConfig(tfList []interface{}) *types.UpdateFailoverConfig {
 	if len(tfList) == 0 {
 		return nil
 	}
 	tfMap := tfList[0].(map[string]interface{})
-	fc := &types.FailoverConfig{}
+	fc := &types.UpdateFailoverConfig{}
 	if val, ok := tfMap["failover_mode"]; ok {
 		fc.FailoverMode = val.(types.FailoverMode)
 	}
@@ -1152,6 +1372,59 @@ func expandSourceFailoverConfig(tfList []interface{}) *types.FailoverConfig {
 	return fc
 }
 
+func expandUpdateMaintenance(tfList []interface{}) *types.UpdateMaintenance {
+	if len(tfList) == 0 {
+		return nil
+	}
+
+	m := &types.UpdateMaintenance{}
+	tfMap := tfList[0].(map[string]interface{})
+
+	if v, ok := tfMap["maintenance_day"].(string); ok && v != "" {
+		m.MaintenanceDay = types.MaintenanceDay(v)
+	}
+
+	if v, ok := tfMap["maintenance_start_hour"].(string); ok && v != "" {
+		m.MaintenanceStartHour = aws.String(v)
+	}
+
+	return m
+}
+
+func expandUpdateMediaStreamInput(flowArn string, tfList []interface{}) []*mediaconnect.UpdateFlowMediaStreamInput {
+	if len(tfList) == 0 {
+		return nil
+	}
+	var ufmsi []*mediaconnect.UpdateFlowMediaStreamInput
+	for _, tfMapRaw := range tfList {
+		tfMap, ok := tfMapRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		ms := &mediaconnect.UpdateFlowMediaStreamInput{FlowArn: aws.String(flowArn)}
+		if val, ok := tfMap["attributes"]; ok {
+			ms.Attributes = expandMediaStreamAttributes(val.(map[string]interface{}))
+		}
+		if val, ok := tfMap["clock_rate"]; ok {
+			ms.ClockRate = int32(val.(int))
+		}
+		if val, ok := tfMap["description"]; ok {
+			ms.Description = aws.String(val.(string))
+		}
+		if val, ok := tfMap["media_stream_name"]; ok {
+			ms.MediaStreamName = aws.String(val.(string))
+		}
+		if val, ok := tfMap["media_stream_type"]; ok {
+			ms.MediaStreamType = val.(types.MediaStreamType)
+		}
+		if val, ok := tfMap["video_format"]; ok {
+			ms.VideoFormat = aws.String(val.(string))
+		}
+
+		ufmsi = append(ufmsi, ms)
+	}
+	return ufmsi
+}
 func expandVpcInterfaces(tfList []interface{}) []types.VpcInterfaceRequest {
 	if len(tfList) == 0 {
 		return nil
@@ -1177,33 +1450,52 @@ func expandVpcInterfaces(tfList []interface{}) []types.VpcInterfaceRequest {
 	return vir
 }
 
-type mediaStream struct {
-	Attributes      []mediaStreamAttributes `tfsdk:"attributes,omitempty"`
-	ClockRate       int32                   `tfsdk:"clock_rate,omitempty"`
-	Description     tftypes.String          `tfsdk:"description,omitempty"`
-	Fmt             int32                   `tfsdk:"fmt,omitempty"`
-	MediaStreamId   int32                   `tfsdk:"media_stream_id,omitempty"`
-	M:wa
-	ediaStreamName tftypes.String          `tfsdk:"media_stream_name,omitempty"`
-	MediaStreamType types.MediaStreamType   `tfsdk:"media_stream_type,omitempty"`
-	VideoFormat     tftypes.String          `tfsdk:"video_format,omitempty"`
-}
-
-type mediaStreamAttributes struct {
-	Fmtp []fmtp         `tfsdk:"fmtp,omitempty"`
-	Lang tftypes.String `tfsdk:"lang,omitempty"`
+type failoverConfig struct {
+	FailoverMode   string       `tfsdk:"failover_mode,omitempty"`
+	RecoveryWindow int32        `tfsdk:"recovery_window,omitempty"`
+	SourcePriority tftypes.List `tfsdk:"source_priority,omitempty"`
+	State          string       `tfsdk:"state,omitempty"`
 }
 
 type fmtp struct {
-	ChannelOrder   tftypes.String    `tfsdk:"channel_order,omitempty"`
+	ChannelOrder   string            `tfsdk:"channel_order,omitempty"`
 	Colorimetry    types.Colorimetry `tfsdk:"colorimetry,omitempty"`
-	ExactFramerate tftypes.String    `tfsdk:"exact_framerate,omitempty"`
-	Par            tftypes.String    `tfsdk:"par,omitempty"`
+	ExactFramerate string            `tfsdk:"exact_framerate,omitempty"`
+	Par            string            `tfsdk:"par,omitempty"`
 	Range          types.Range       `tfsdk:"range,omitempty"`
 	ScanMode       types.ScanMode    `tfsdk:"scan_mode,omitempty"`
 	Tcs            types.Tcs         `tfsdk:"tcs,omitempty"`
 }
 
-type source struct {
+type mediaStream struct {
+	Attributes      []mediaStreamAttributes `tfsdk:"attributes,omitempty"`
+	ClockRate       int32                   `tfsdk:"clock_rate,omitempty"`
+	Description     string                  `tfsdk:"description,omitempty"`
+	Fmt             int32                   `tfsdk:"fmt,omitempty"`
+	MediaStreamId   int32                   `tfsdk:"media_stream_id,omitempty"`
+	MediaStreamName string                  `tfsdk:"media_stream_name,omitempty"`
+	MediaStreamType types.MediaStreamType   `tfsdk:"media_stream_type,omitempty"`
+	VideoFormat     string                  `tfsdk:"video_format,omitempty"`
+}
 
+type mediaStreamAttributes struct {
+	Fmtp []fmtp `tfsdk:"fmtp,omitempty"`
+	Lang string `tfsdk:"lang,omitempty"`
+}
+
+type source struct {
+	DataTransferSubscriberFeePercent int32        `tfsdk:"data_transfer_subscriber_fee_percent,omitempty"`
+	Decryption                       tftypes.List `tfsdk:"decryption,omitempty"`
+	Description                      string       `tfsdk:"description,omitempty"`
+	EntitlementArn                   string       `tfsdk:"entitlement,omitempty"`
+	IngestIp                         string       `tfsdk:"ingest_ip,omitempty"`
+	IngestPort                       int32        `tfsdk:"ingest_port,omitempty"`
+	MediaStreamSourceConfigurations  tftypes.Set  `tfsdk:"media_stream_source_configurations,omitempty"`
+	Name                             string       `tfsdk:"name,omitempty"`
+	SenderControlPort                int32        `tfsdk:"sender_control_port,omitempty"`
+	SenderIpAddress                  string       `tfsdk:"sender_ip_address,omitempty"`
+	SourceArn                        string       `tfsdk:"source_arn,omitempty"`
+	Transport                        tftypes.List `tfsdk:"transport,omitempty"`
+	VpcInterfaceName                 string       `tfsdk:"vpc_interface_name,omitempty"`
+	WhitelistCidr                    string       `tfsdk:"whitelist_cidr,omitempty"`
 }
