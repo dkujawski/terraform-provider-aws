@@ -1,39 +1,6 @@
 package mediaconnect
 
-// **PLEASE DELETE THIS AND ALL TIP COMMENTS BEFORE SUBMITTING A PR FOR REVIEW!**
-//
-// TIP: ==== INTRODUCTION ====
-// Thank you for trying the skaff tool!
-//
-// You have opted to include these helpful comments. They all include "TIP:"
-// to help you find and remove them when you're done with them.
-//
-// While some aspects of this file are customized to your input, the
-// scaffold tool does *not* look at the AWS API and ensure it has correct
-// function, structure, and variable names. It makes guesses based on
-// commonalities. You will need to make significant adjustments.
-//
-// In other words, as generated, this is a rough outline of the work you will
-// need to do. If something doesn't make sense for your situation, get rid of
-// it.
-//
-// Remember to register this new resource in the provider
-// (internal/provider/provider.go) once you finish. Otherwise, Terraform won't
-// know about it.
-
 import (
-	// TIP: ==== IMPORTS ====
-	// This is a common set of imports but not customized to your code since
-	// your code hasn't been written yet. Make sure you, your IDE, or
-	// goimports -w <file> fixes these imports.
-	//
-	// The provider linter wants your imports to be in two groups: first,
-	// standard library (i.e., "fmt" or "strings"), second, everything else.
-	//
-	// Also, AWS Go SDK v2 may handle nested structures differently than v1,
-	// using the services/mediaconnect/types package. If so, you'll
-	// need to import types and reference the nested types, e.g., as
-	// types.<Type Name>.
 	"context"
 	"errors"
 	"log"
@@ -55,89 +22,22 @@ import (
 	"github.com/hashicorp/terraform-provider-aws/names"
 )
 
-// TIP: ==== FILE STRUCTURE ====
-// All resources should follow this basic outline. Improve this resource's
-// maintainability by sticking to it.
-//
-// 1. Package declaration
-// 2. Imports
-// 3. Main resource function with schema
-// 4. Create, read, update, delete functions (in that order)
-// 5. Other functions (flatteners, expanders, waiters, finders, etc.)
 func ResourceOutput() *schema.Resource {
 	return &schema.Resource{
-		// TIP: ==== ASSIGN CRUD FUNCTIONS ====
-		// These 4 functions handle CRUD responsibilities below.
 		CreateWithoutTimeout: resourceOutputCreate,
 		ReadWithoutTimeout:   resourceOutputRead,
 		UpdateWithoutTimeout: resourceOutputUpdate,
 		DeleteWithoutTimeout: resourceOutputDelete,
-
-		// TIP: ==== TERRAFORM IMPORTING ====
-		// If Read can get all the information it needs from the Identifier
-		// (i.e., d.Id()), you can use the Passthrough importer. Otherwise,
-		// you'll need a custom import function.
-		//
-		// See more:
-		// https://hashicorp.github.io/terraform-provider-aws/add-import-support/
-		// https://hashicorp.github.io/terraform-provider-aws/data-handling-and-conversion/#implicit-state-passthrough
-		// https://hashicorp.github.io/terraform-provider-aws/data-handling-and-conversion/#virtual-attributes
 		Importer: &schema.ResourceImporter{
 			StateContext: schema.ImportStatePassthroughContext,
 		},
 
-		// TIP: ==== CONFIGURABLE TIMEOUTS ====
-		// Users can configure timeout lengths but you need to use the times they
-		// provide. Access the timeout they configure (or the defaults) using,
-		// e.g., d.Timeout(schema.TimeoutCreate) (see below). The times here are
-		// the defaults if they don't configure timeouts.
 		Timeouts: &schema.ResourceTimeout{
 			Create: schema.DefaultTimeout(30 * time.Minute),
 			Update: schema.DefaultTimeout(30 * time.Minute),
 			Delete: schema.DefaultTimeout(30 * time.Minute),
 		},
 
-		// TIP: ==== SCHEMA ====
-		// In the schema, add each of the attributes in snake case (e.g.,
-		// delete_automated_backups).
-		//
-		// Formatting rules:
-		// * Alphabetize attributes to make them easier to find.
-		// * Do not add a blank line between attributes.
-		//
-		// Attribute basics:
-		// * If a user can provide a value ("configure a value") for an
-		//   attribute (e.g., instances = 5), we call the attribute an
-		//   "argument."
-		// * You change the way users interact with attributes using:
-		//     - Required
-		//     - Optional
-		//     - Computed
-		// * There are only four valid combinations:
-		//
-		// 1. Required only - the user must provide a value
-		// Required: true,
-		//
-		// 2. Optional only - the user can configure or omit a value; do not
-		//    use Default or DefaultFunc
-		// Optional: true,
-		//
-		// 3. Computed only - the provider can provide a value but the user
-		//    cannot, i.e., read-only
-		// Computed: true,
-		//
-		// 4. Optional AND Computed - the provider or user can provide a value;
-		//    use this combination if you are using Default or DefaultFunc
-		// Optional: true,
-		// Computed: true,
-		//
-		// You will typically find arguments in the input struct
-		// (e.g., CreateDBInstanceInput) for the create operation. Sometimes
-		// they are only in the input struct (e.g., ModifyDBInstanceInput) for
-		// the modify operation.
-		//
-		// For more about schema options, visit
-		// https://pkg.go.dev/github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema#Schema
 		Schema: map[string]*schema.Schema{
 			"arn": {
 				Type:     schema.TypeString,
@@ -334,63 +234,86 @@ const (
 )
 
 func resourceOutputCreate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	// TIP: ==== RESOURCE CREATE ====
-	// Generally, the Create function should do the following things. Make
-	// sure there is a good reason if you don't do one of these.
-	//
-	// 1. Get a client connection to the relevant service
-	// 2. Populate a create input structure
-	// 3. Call the AWS create/put function
-	// 4. Using the output from the create function, set the minimum arguments
-	//    and attributes for the Read function to work. At a minimum, set the
-	//    resource ID. E.g., d.SetId(<Identifier, such as AWS ID or ARN>)
-	// 5. Use a waiter to wait for create to complete
-	// 6. Call the Read function in the Create return
+	aor := types.AddOutputRequest{Protocol: d.Get("protocol").(types.Protocol)}
 
-	// TIP: -- 1. Get a client connection to the relevant service
-	conn := meta.(*conns.AWSClient).MediaConnectConn
+	if v, ok := d.GetOk("description"); ok {
+		aor.Description = aws.String(v.(string))
+	}
+	if v, ok := d.GetOk("destination"); ok {
+		aor.Destination = aws.String(v.(string))
+	}
+	if v, ok := d.GetOk("name"); ok {
+		aor.Name = aws.String(v.(string))
+	}
+	if v, ok := d.GetOk("remote_id"); ok {
+		aor.RemoteId = aws.String(v.(string))
+	}
+	if v, ok := d.GetOk("stream_id"); ok {
+		aor.StreamId = aws.String(v.(string))
+	}
 
-	// TIP: -- 2. Populate a create input structure
+	if v, ok := d.GetOk("maxLatency"); ok {
+		aor.MaxLatency = v.(int32)
+	}
+	if v, ok := d.GetOk("minLatency"); ok {
+		aor.MinLatency = v.(int32)
+	}
+	if v, ok := d.GetOk("port"); ok {
+		aor.Port = v.(int32)
+	}
+	if v, ok := d.GetOk("senderControlPort"); ok {
+		aor.SenderControlPort = v.(int32)
+	}
+	if v, ok := d.GetOk("smoothingLatency"); ok {
+		aor.SmoothingLatency = v.(int32)
+	}
+
+	if v, ok := d.GetOk("cidr_allow_list"); ok {
+		aor.CidrAllowList = v.([]string)
+	}
+
+	if v, ok := d.GetOk("encryption"); ok {
+		aor.Encryption = expandEncryption(v.(map[string]interface{}))
+	}
+
+	if v, ok := d.GetOk("media_stream_output_configuration"); ok {
+		aor.MediaStreamOutputConfigurations = expandMediaStreamOutputConfigurations(v.([]interface{}))
+	}
+	if v, ok := d.GetOk("vpc_interface_attachment"); ok {
+		aor.VpcInterfaceAttachment = &types.VpcInterfaceAttachment{
+			VpcInterfaceName: aws.String(v.(map[string]interface{})["vpc_interface_name"].(string)),
+		}
+	}
+
 	in := &mediaconnect.AddFlowOutputsInput{
-		// TIP: Mandatory or fields that will always be present can be set when
-		// you create the Input structure. (Replace these with real fields.)
-		OutputName: aws.String(d.Get("name").(string)),
-		OutputType: aws.String(d.Get("type").(string)),
+		FlowArn: aws.String(d.Get("flow_arn").(string)),
+		Outputs: []types.AddOutputRequest{aor},
 	}
 
-	if v, ok := d.GetOk("max_size"); ok {
-		// TIP: Optional fields should be set based on whether or not they are
-		// used.
-		in.MaxSize = aws.Int64(int64(v.(int)))
-	}
-
-	if v, ok := d.GetOk("complex_argument"); ok && len(v.([]interface{})) > 0 {
-		// TIP: Use an expander to assign a complex argument.
-		in.ComplexArguments = expandComplexArguments(v.([]interface{}))
-	}
-
-	// TIP: -- 3. Call the AWS create function
+	conn := meta.(*conns.AWSClient).MediaConnectConn
 	out, err := conn.AddFlowOutputs(ctx, in)
 	if err != nil {
-		// TIP: Since d.SetId() has not been called yet, you cannot use d.Id()
-		// in error messages at this point.
 		return create.DiagError(names.MediaConnect, create.ErrActionCreating, ResNameOutput, d.Get("name").(string), err)
 	}
 
-	if out == nil || out.Output == nil {
+	if out == nil || len(out.Outputs) == 0 {
 		return create.DiagError(names.MediaConnect, create.ErrActionCreating, ResNameOutput, d.Get("name").(string), errors.New("empty output"))
 	}
 
-	// TIP: -- 4. Set the minimum arguments and/or attributes for the Read function to
-	// work.
-	d.SetId(aws.ToString(out.Output.OutputID))
+	for _, output := range out.Outputs {
+		if aor.Name == output.Name {
+			d.SetId(aws.ToString(output.OutputArn))
+			break
+		}
+	}
+	if d.Id() == "" {
+		return create.DiagError(names.MediaConnect, create.ErrActionCreating, ResNameOutput, d.Get("name").(string), errors.New("empty output"))
+	}
 
-	// TIP: -- 5. Use a waiter to wait for create to complete
 	if _, err := waitOutputCreated(ctx, conn, d.Id(), d.Timeout(schema.TimeoutCreate)); err != nil {
 		return create.DiagError(names.MediaConnect, create.ErrActionWaitingForCreation, ResNameOutput, d.Id(), err)
 	}
 
-	// TIP: -- 6. Call the Read function in the Create return
 	return resourceOutputRead(ctx, d, meta)
 }
 
@@ -766,72 +689,52 @@ func flattenComplexArguments(apiObjects []*mediaconnect.ComplexArgument) []inter
 	return l
 }
 
-// TIP: Remember, as mentioned above, expanders take a Terraform data structure
-// and return something that you can send to the AWS API. In other words,
-// expanders translate from Terraform -> AWS.
-//
-// See more:
-// https://hashicorp.github.io/terraform-provider-aws/data-handling-and-conversion/
-func expandComplexArgument(tfMap map[string]interface{}) *mediaconnect.ComplexArgument {
-	if tfMap == nil {
-		return nil
-	}
-
-	a := &mediaconnect.ComplexArgument{}
-
-	if v, ok := tfMap["sub_field_one"].(string); ok && v != "" {
-		a.SubFieldOne = aws.String(v)
-	}
-
-	if v, ok := tfMap["sub_field_two"].(string); ok && v != "" {
-		a.SubFieldTwo = aws.String(v)
-	}
-
-	return a
-}
-
-// TIP: Even when you have a list with max length of 1, this plural function
-// works brilliantly. However, if the AWS API takes a structure rather than a
-// slice of structures, you will not need it.
-func expandComplexArguments(tfList []interface{}) []*mediaconnect.ComplexArgument {
-	// TIP: The AWS API can be picky about whether you send a nil or zero-
-	// length for an argument that should be cleared. For example, in some
-	// cases, if you send a nil value, the AWS API interprets that as "make no
-	// changes" when what you want to say is "remove everything." Sometimes
-	// using a zero-length list will cause an error.
-	//
-	// As a result, here are two options. Usually, option 1, nil, will work as
-	// expected, clearing the field. But, test going from something to nothing
-	// to make sure it works. If not, try the second option.
-
-	// TIP: Option 1: Returning nil for zero-length list
+func expandDestinationConfigurations(tfList []interface{}) []types.DestinationConfigurationRequest {
 	if len(tfList) == 0 {
 		return nil
 	}
-
-	var s []*mediaconnect.ComplexArgument
-
-	// TIP: Option 2: Return zero-length list for zero-length list. If option 1 does
-	// not work, after testing going from something to nothing (if that is
-	// possible), uncomment out the next line and remove option 1.
-	//
-	// s := make([]*mediaconnect.ComplexArgument, 0)
-
-	for _, r := range tfList {
-		m, ok := r.(map[string]interface{})
-
+	var dcr []types.DestinationConfigurationRequest
+	for _, tfMapRaw := range tfList {
+		tfMap, ok := tfMapRaw.(map[string]interface{})
 		if !ok {
 			continue
 		}
-
-		a := expandComplexArgument(m)
-
-		if a == nil {
+		r := types.DestinationConfigurationRequest{
+			DestinationIp:   aws.String(tfMap["destination_ip"].(string)),
+			DestinationPort: tfMap["destination_port"].(int32),
+			Interface: &types.InterfaceRequest{
+				Name: aws.String(tfMap["interface"].(map[string]interface{})["name"].(string)),
+			},
+		}
+		dcr = append(dcr, r)
+	}
+	return dcr
+}
+func expandMediaStreamOutputConfigurations(tfList []interface{}) []types.MediaStreamOutputConfigurationRequest {
+	if len(tfList) == 0 {
+		return nil
+	}
+	var msocr []types.MediaStreamOutputConfigurationRequest
+	for _, tfMapRaw := range tfList {
+		tfMap, ok := tfMapRaw.(map[string]interface{})
+		if !ok {
 			continue
 		}
-
-		s = append(s, a)
+		cr := types.MediaStreamOutputConfigurationRequest{
+			EncodingName:    tfMap["encoding_name"].(types.EncodingName),
+			MediaStreamName: aws.String(tfMap["media_stream_name"].(string)),
+		}
+		if v, ok := tfMap["destination_configurations"]; ok {
+			cr.DestinationConfigurations = expandDestinationConfigurations(v.([]interface{}))
+		}
+		if v, ok := tfMap["encoding_parameters"]; ok {
+			rawParams := v.(map[string]interface{})
+			cr.EncodingParameters = &types.EncodingParametersRequest{
+				CompressionFactor: rawParams["compression_factor"].(float64),
+				EncoderProfile:    rawParams["encoder_profile"].(types.EncoderProfile),
+			}
+		}
+		msocr = append(msocr, cr)
 	}
-
-	return s
+	return msocr
 }
